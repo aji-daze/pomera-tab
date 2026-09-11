@@ -156,6 +156,11 @@ body.focus .panel { top: 0; }
 .panel-body { flex: 1; overflow: auto; padding: 0 12px 20px; }
 .hint { color: var(--muted); font-size: 13px; line-height: 1.6; }
 
+.crumbs { display: flex; flex-wrap: wrap; align-items: center; gap: 2px; padding: 0 12px 6px; font-size: 13px; }
+.crumbs .crumb { min-height: 30px; padding: 2px 8px; border-color: transparent; }
+.crumbs .crumb:last-child { font-weight: 700; }
+.crumbs .sep { color: var(--muted); }
+.folder-item .name { font-weight: 600; }
 .folder { margin: 10px 0 4px; font-size: 12.5px; color: var(--muted); display: flex; justify-content: space-between; }
 .item {
   display: flex; align-items: center; gap: 8px; padding: 8px 8px; border-radius: 8px; cursor: pointer; min-height: 44px;
