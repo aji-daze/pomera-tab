@@ -157,18 +157,26 @@ async function syncAll(cfg, hooks) {
     const text = await pull(cfg, sha);
     const d = newDoc({ ...splitPath(path), content: text });
     d.baseSha = sha;
+    d.sha = sha;
+    d.shaAt = d.updated;
     await db.put('docs', d);
     stats.pulled++;
   };
 
-  for (const path of new Set([...remote.keys(), ...byPath.keys(), ...tombs.keys()])) {
+  const paths = [...new Set([...remote.keys(), ...byPath.keys(), ...tombs.keys()])];
+  for (const [i, path] of paths.entries()) {
+    hooks.onProgress?.(i + 1, paths.length);
     const R = remote.get(path) || null;
     const doc = byPath.get(path);
     const tomb = tombs.get(path);
 
     if (doc) {
       const content = doc.content;
-      const L = await blobSha(content);
+      // 内容のハッシュは更新日時ごとに覚えておき、変わっていない原稿は計算し直さない
+      const L = doc.sha && doc.shaAt === doc.updated ? doc.sha : await blobSha(content);
+      if (doc.shaAt !== doc.updated) {
+        await db.update('docs', doc.id, (d) => { if (d.updated === doc.updated) { d.sha = L; d.shaAt = d.updated; } return d; });
+      }
       let B = doc.baseSha || null;
       if (!B && tomb && tomb.baseSha === R) B = R; // 削除したのと同じ名前で作り直した
       if (tomb) await db.del('tombs', path);
@@ -183,7 +191,7 @@ async function syncAll(cfg, hooks) {
         // 同期中に書き足されていたら取り込まない（次回の同期で競合として扱う）
         const applied = await db.update('docs', doc.id, (d) => {
           if (d.content !== content) return;
-          d.content = text; d.baseSha = R; d.updated = Date.now();
+          d.content = text; d.baseSha = R; d.updated = Date.now(); d.sha = R; d.shaAt = d.updated;
           return d;
         });
         if (applied) { stats.pulled++; hooks.onPulled?.(doc.id, content, text); }

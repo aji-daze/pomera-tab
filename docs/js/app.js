@@ -17,6 +17,7 @@ const DEFAULTS = {
   genkoCols: 20, genkoRows: 20, chapters: true, autoIndent: true, tabFullwidth: true,
   typewriter: false, wakeLock: true, focusStatus: true, autoSyncMin: 5, fileSort: 'name',
   proofCats: { ...Proof.DEFAULT_CATS }, proofDialogue: true, proofMaxLen: 120,
+  memoFolder: 'Obsidian/ポメラ/メモ', driveName: 'OneDrive',
 };
 const OPEN_BRACKETS = '「『（(〈《【［〔“‘';
 const WEBFONTS = {
@@ -50,6 +51,7 @@ const S = {
   lastInput: Date.now(),
   wakeLock: null,
   fileFilter: '',
+  fileDir: '',
   showTrash: false,
   dictRange: [0, 0],
   dictPick: null,
@@ -451,7 +453,7 @@ async function folderList() {
 async function newDocDialog() {
   const r = await form('新しい原稿', [
     { key: 'name', label: '名前', value: '' , placeholder: '例：第一章' },
-    { key: 'folder', label: 'フォルダ（作品名など。空欄可）', value: S.doc?.folder || '', list: await folderList() },
+    { key: 'folder', label: 'フォルダ（「/」で階層。例：Obsidian/pvo）', value: S.panel === 'files' ? S.fileDir : (S.doc?.folder || ''), list: await folderList() },
   ], '作成');
   if (!r) return;
   closePanel();
@@ -459,7 +461,7 @@ async function newDocDialog() {
 }
 
 async function quickMemo(text = '') {
-  await createDoc({ folder: 'メモ', name: T.compactStamp(), content: text });
+  await createDoc({ folder: S.settings.memoFolder, name: T.compactStamp(), content: text });
 }
 
 async function relocateDoc(id, folder, name) {
@@ -634,62 +636,105 @@ async function openFiles() {
   await saveNow();
   openPanel('files', 'left');
   S.showTrash = false;
+  S.fileDir = S.doc?.folder || '';
   await renderFiles(true);
 }
 
-async function renderFiles(focusSearch = false) {
+const joinDir = (a, b) => (a ? `${a}/${b}` : b);
+const parentDir = (dir) => dir.split('/').slice(0, -1).join('/');
+const enterClick = (e) => { if (e.key === 'Enter') { e.preventDefault(); e.currentTarget.click(); } };
+
+// ドライブ（OneDrive など）のフォルダを1階層ずつたどる一覧。検索中とゴミ箱は全体を一覧にする
+async function renderFiles(focusCurrent = false) {
   if (S.panel !== 'files') return;
   const all = await db.getAll('docs');
+  const active = all.filter((d) => !d.trashed);
   const trashed = all.filter((d) => d.trashed).sort((a, b) => b.trashed - a.trashed);
+  const byName = (a, b) => a.name.localeCompare(b.name, 'ja', { numeric: true });
+  const sorter = S.settings.fileSort === 'updated' ? (a, b) => b.updated - a.updated : byName;
+
   const search = h('input', {
-    type: 'search', placeholder: '名前・本文で絞り込み', value: S.fileFilter,
+    type: 'search', placeholder: 'すべてのフォルダから、名前・本文で探す', value: S.fileFilter,
     oninput: (e) => { S.fileFilter = e.target.value; renderList(); },
   });
-  const list = h('div', { class: 'panel-body' });
+  const crumbs = h('div', { class: 'crumbs' });
+  const list = h('div', {
+    class: 'panel-body',
+    onkeydown: (e) => {
+      if (e.key === 'Backspace' && S.fileDir && !S.fileFilter && !S.showTrash) { e.preventDefault(); goTo(parentDir(S.fileDir)); }
+    },
+  });
   const sortBtn = h('button', {
-    onclick: async () => { S.settings.fileSort = S.settings.fileSort === 'name' ? 'updated' : 'name'; saveSettings(); renderFiles(); },
+    onclick: () => { S.settings.fileSort = S.settings.fileSort === 'name' ? 'updated' : 'name'; saveSettings(); renderFiles(); },
   }, S.settings.fileSort === 'name' ? '名前順' : '更新順');
+
+  const goTo = (dir) => {
+    S.fileDir = dir;
+    renderList();
+    list.querySelector('.item')?.focus();
+  };
+
+  const fileItem = (d, showFolder) => h('div', {
+    class: `item${S.doc?.id === d.id ? ' current' : ''}`, tabindex: '0',
+    onclick: async () => { if (d.trashed) return fileMenu(d.id); closePanel(); await openDoc(d.id); },
+    onkeydown: (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); e.currentTarget.click(); }
+      if (e.key === 'F2') { e.preventDefault(); renameDialog(d.id); }
+      if (e.key === 'Delete') { e.preventDefault(); if (!d.trashed) trashDoc(d.id).then(() => renderFiles()); }
+      if (e.key === 'ContextMenu' || (e.key === 'Enter' && e.shiftKey)) { e.preventDefault(); fileMenu(d.id); }
+    },
+  },
+  h('div', { class: 'main' },
+    h('div', { class: 'name' }, d.name + (d.ext === '.txt' ? '.txt' : '')),
+    h('div', { class: 'meta' }, `${showFolder && d.folder ? `📁 ${d.folder}・` : ''}約${fmt(d.content.length)}字・${relTime(d.trashed || d.updated)}${d.baseSha ? '' : '・未同期'}`)),
+  h('button', { title: 'メニュー', onclick: (e) => { e.stopPropagation(); fileMenu(d.id); } }, '⋯'));
+
+  const folderItem = (label, dir, count) => h('div', { class: 'item folder-item', tabindex: '0', onclick: () => goTo(dir), onkeydown: enterClick },
+    h('div', { class: 'main' }, h('div', { class: 'name' }, label), count != null ? h('div', { class: 'meta' }, `${count}件`) : null));
 
   const renderList = () => {
     const q = S.fileFilter.trim();
-    const docs = (S.showTrash ? trashed : all.filter((d) => !d.trashed))
-      .filter((d) => !q || d.name.includes(q) || d.folder.includes(q) || d.content.includes(q));
-    const byName = (a, b) => a.name.localeCompare(b.name, 'ja', { numeric: true });
-    const sorter = S.settings.fileSort === 'updated' ? (a, b) => b.updated - a.updated : byName;
-    const groups = new Map();
-    for (const d of docs) {
-      if (!groups.has(d.folder)) groups.set(d.folder, []);
-      groups.get(d.folder).push(d);
-    }
-    const folders = [...groups.keys()].sort((a, b) => (a === '' ? -1 : b === '' ? 1 : a.localeCompare(b, 'ja', { numeric: true })));
     list.replaceChildren();
-    if (!docs.length) list.append(h('p', { class: 'hint' }, S.showTrash ? 'ゴミ箱は空です。' : '該当する原稿がありません。'));
-    for (const f of folders) {
-      const items = groups.get(f).sort(sorter);
-      list.append(h('div', { class: 'folder' }, h('span', {}, f ? `📁 ${f}` : 'フォルダなし'), h('span', {}, `${items.length}件`)));
-      for (const d of items) {
-        list.append(h('div', {
-          class: `item${S.doc?.id === d.id ? ' current' : ''}`, tabindex: '0',
-          onclick: async () => { if (d.trashed) return fileMenu(d.id); closePanel(); await openDoc(d.id); },
-          onkeydown: (e) => {
-            if (e.key === 'Enter') { e.preventDefault(); e.currentTarget.click(); }
-            if (e.key === 'F2') { e.preventDefault(); renameDialog(d.id); }
-            if (e.key === 'Delete') { e.preventDefault(); if (!d.trashed) trashDoc(d.id).then(() => renderFiles()); }
-            if (e.key === 'ContextMenu' || (e.key === 'Enter' && e.shiftKey)) { e.preventDefault(); fileMenu(d.id); }
-          },
-        },
-        h('div', { class: 'main' },
-          h('div', { class: 'name' }, d.name + (d.ext === '.txt' ? '.txt' : '')),
-          h('div', { class: 'meta' }, `${fmt(quickChars(d.content))}字・${relTime(d.trashed || d.updated)}${d.baseSha ? '' : '・未同期'}`)),
-        h('button', { title: 'メニュー', onclick: (e) => { e.stopPropagation(); fileMenu(d.id); } }, '⋯')));
+    crumbs.replaceChildren();
+    if (S.showTrash || q) {
+      crumbs.hidden = true;
+      const docs = (S.showTrash ? trashed : active.filter((d) => d.name.includes(q) || d.folder.includes(q) || d.content.includes(q)).sort(sorter));
+      if (!docs.length) list.append(h('p', { class: 'hint' }, S.showTrash ? 'ゴミ箱は空です。' : '該当する原稿がありません。'));
+      docs.slice(0, 300).forEach((d) => list.append(fileItem(d, true)));
+      return;
+    }
+    crumbs.hidden = false;
+    const dir = S.fileDir;
+    const parts = dir ? dir.split('/') : [];
+    crumbs.append(h('button', { class: 'crumb', onclick: () => goTo('') }, `☁ ${S.settings.driveName || 'ドライブ'}`));
+    parts.forEach((p, i) => crumbs.append(h('span', { class: 'sep' }, '›'), h('button', { class: 'crumb', onclick: () => goTo(parts.slice(0, i + 1).join('/')) }, p)));
+
+    const sub = new Map();
+    const files = [];
+    const prefix = dir ? `${dir}/` : '';
+    for (const d of active) {
+      if (d.folder === dir) files.push(d);
+      else if (!dir || d.folder.startsWith(prefix)) {
+        const name = d.folder.slice(prefix.length).split('/')[0];
+        sub.set(name, (sub.get(name) || 0) + 1);
       }
     }
+    if (dir) list.append(folderItem('↑ 上のフォルダへ', parentDir(dir)));
+    [...sub.keys()].sort((a, b) => a.localeCompare(b, 'ja', { numeric: true })).forEach((name) => list.append(folderItem(`📁 ${name}`, joinDir(dir, name), sub.get(name))));
+    files.sort(sorter).forEach((d) => list.append(fileItem(d, false)));
+    if (!sub.size && !files.length) list.append(h('p', { class: 'hint' }, 'このフォルダには、まだ原稿がありません。「＋ 新規」でここに作れます。'));
   };
 
   panel.replaceChildren(
     panelHead(S.showTrash ? 'ゴミ箱' : 'ファイル'),
     h('div', { class: 'panel-tools' },
       S.showTrash ? null : h('button', { class: 'primary', onclick: newDocDialog }, '＋ 新規'),
+      S.showTrash ? null : h('button', {
+        onclick: async () => {
+          const r = await form('新しいフォルダ', [{ key: 'name', label: `「${S.fileDir || S.settings.driveName}」の中に作るフォルダの名前`, value: '' }], '作成');
+          if (r?.name) goTo(joinDir(S.fileDir, T.safeFolder(r.name)));
+        },
+      }, '＋ フォルダ'),
       S.showTrash ? null : sortBtn,
       h('button', { onclick: () => { S.showTrash = !S.showTrash; renderFiles(); } }, S.showTrash ? '← ファイルに戻る' : `ゴミ箱（${trashed.length}）`),
       S.showTrash && trashed.length ? h('button', {
@@ -701,10 +746,11 @@ async function renderFiles(focusSearch = false) {
         },
       }, '空にする') : null,
       search),
+    crumbs,
     list);
   renderList();
-  if (focusSearch) {
-    const current = list.querySelector('.item.current');
+  if (focusCurrent) {
+    const current = list.querySelector('.item.current') || list.querySelector('.item');
     (current || search).focus();
     current?.scrollIntoView({ block: 'center' });
   }
@@ -1320,6 +1366,10 @@ async function openSettings(section) {
       check('autoIndent', '改行したとき段落の字下げ（全角空白）を引き継ぐ。「 などで始めると字下げを外す'),
       check('tabFullwidth', 'Tab キーで全角空白を入れる'),
       check('chapters', '「第一章」「プロローグ」などの行も見出しとして扱う'),
+      field('すぐメモの保存先', h('input', {
+        type: 'text', value: st.memoFolder, placeholder: '例：Obsidian/ポメラ/メモ',
+        onchange: (e) => { st.memoFolder = T.safeFolder(e.target.value) || 'メモ'; e.target.value = st.memoFolder; saveSettings(); },
+      })),
       field('原稿用紙換算', select('genkoCols', [[20, '20字'], [40, '40字']]), '×', select('genkoRows', [[20, '20行'], [30, '30行'], [40, '40行']]))),
     h('fieldset', { class: 'set', id: 'set-sync' }, h('legend', {}, '同期（GitHub 経由で PC の Obsidian へ）'),
       h('p', { class: 'hint' }, '原稿用の非公開リポジトリと、そのリポジトリだけに書き込めるトークンを入れます。手順はセットアップ手順書を見てください。トークンはこの端末の中にだけ保存されます。'),
@@ -1485,7 +1535,11 @@ async function doSync({ manual = false } = {}) {
   const before = S.saveCount;
   setSyncState('running');
   try {
-    const st = await Sync.sync(S.sync, { onPulled, onTrashed });
+    const st = await Sync.sync(S.sync, {
+      onPulled,
+      onTrashed,
+      onProgress: (i, n) => { if (n > 30 && i % 5 === 0) $('#stSync').textContent = `同期中 ${i}/${n}`; },
+    });
     S.syncError = null;
     S.lastSyncOk = Date.now();
     S.unsynced = S.saveCount !== before;
@@ -1535,7 +1589,8 @@ async function onTrashed(id) {
 async function hasUnsynced() {
   if ((await db.count('tombs')) > 0) return true;
   for (const d of await activeDocs()) {
-    if (!d.baseSha || d.baseSha !== await Sync.blobSha(d.content)) return true;
+    const sha = d.sha && d.shaAt === d.updated ? d.sha : await Sync.blobSha(d.content);
+    if (!d.baseSha || d.baseSha !== sha) return true;
   }
   return false;
 }
