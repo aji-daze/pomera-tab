@@ -3,17 +3,20 @@ import * as db from './db.js';
 import * as T from './text.js';
 import * as Sync from './sync.js';
 import * as Dict from './dict.js';
+import * as Proof from './proof.js';
 
 const VERSION = '1.0.0';
 const $ = (s, root = document) => root.querySelector(s);
 const editor = $('#editor');
 const preview = $('#preview');
 const panel = $('#panel');
+const proofLayer = $('#proofLayer');
 
 const DEFAULTS = {
   theme: 'paper', font: 'mincho', fontSize: 20, lineHeight: 1.8, cols: 0, vertical: false,
   genkoCols: 20, genkoRows: 20, chapters: true, autoIndent: true, tabFullwidth: true,
   typewriter: false, wakeLock: true, focusStatus: true, autoSyncMin: 5, fileSort: 'name',
+  proofCats: { ...Proof.DEFAULT_CATS }, proofDialogue: true, proofMaxLen: 120,
 };
 const OPEN_BRACKETS = '「『（(〈《【［〔“‘';
 const WEBFONTS = {
@@ -51,6 +54,10 @@ const S = {
   dictRange: [0, 0],
   dictPick: null,
   find: { q: '', r: '', regex: false },
+  proof: false,
+  proofIssues: [],
+  proofTimer: 0,
+  proofIgnoreGlobal: new Set(),
 };
 
 // ---------------------------------------------------------------- 小道具
@@ -261,6 +268,9 @@ function applyView() {
     document.head.append(h('link', { id: `wf-${st.font}`, rel: 'stylesheet', href: WEBFONTS[st.font] }));
   }
   if (S.preview) renderPreview();
+  proofLayer.hidden = !S.proof || S.preview;
+  $('#btnProof').classList.toggle('active', S.proof);
+  if (S.proof && !S.preview) renderProofLayer();
 }
 
 function updateTitle() {
@@ -328,6 +338,11 @@ function onEdited() {
   clearTimeout(S.statsTimer);
   S.statsTimer = setTimeout(() => updateStats(true), editor.value.length > 50000 ? 600 : 200);
   typewriter();
+  if (S.proof) {
+    proofLayer.classList.add('dim'); // 入力中は波線の位置がずれるので隠し、手が止まったら検査し直す
+    clearTimeout(S.proofTimer);
+    S.proofTimer = setTimeout(runProof, 800);
+  }
 }
 
 async function saveNow() {
@@ -411,6 +426,7 @@ async function openDoc(id, { focus = true } = {}) {
   updateTitle();
   updateStats();
   setSaveState(true);
+  if (S.proof) runProof();
   await db.kvSet('lastDocId', id);
   if (focus && !S.panel) editor.focus({ preventScroll: true });
   requestAnimationFrame(() => revealCaret(caret, 0.35));
@@ -979,6 +995,183 @@ async function replaceAll() {
   if (S.panel === 'find') openFind();
 }
 
+// ---- 校正モード
+
+function proofOptions() {
+  return {
+    cats: { ...Proof.DEFAULT_CATS, ...S.settings.proofCats },
+    excludeDialogue: S.settings.proofDialogue,
+    maxLen: S.settings.proofMaxLen,
+    ignore: new Set([...S.proofIgnoreGlobal, ...(S.doc?.proofIgnore || [])]),
+  };
+}
+
+function runProof() {
+  clearTimeout(S.proofTimer);
+  S.proofTimer = 0;
+  if (!S.proof || !S.doc) return;
+  S.proofIssues = Proof.check(editor.value, proofOptions());
+  renderProofLayer();
+  const st = $('#stProof');
+  st.hidden = false;
+  st.textContent = `校正 ${S.proofIssues.length}件`;
+  if (S.panel === 'proof') renderProofPanel();
+}
+
+// 本文の真下に同じ体裁の層を置き、指摘の位置に波線を引く
+function renderProofLayer() {
+  if (!S.proof || S.preview) return;
+  const text = editor.value;
+  const frag = document.createDocumentFragment();
+  let pos = 0;
+  S.proofIssues.forEach((is, i) => {
+    if (is.start < pos) return;
+    frag.append(text.slice(pos, is.start), h('mark', { class: `pf-${is.cat}`, 'data-i': String(i) }, text.slice(is.start, is.end)));
+    pos = is.end;
+  });
+  frag.append(`${text.slice(pos)}\n​`);
+  proofLayer.replaceChildren(frag);
+  const cs = getComputedStyle(editor);
+  Object.assign(proofLayer.style, {
+    left: `${editor.offsetLeft}px`, top: `${editor.offsetTop}px`,
+    width: `${editor.clientWidth}px`, height: `${editor.clientHeight}px`,
+    paddingTop: cs.paddingTop, paddingRight: cs.paddingRight, paddingBottom: cs.paddingBottom, paddingLeft: cs.paddingLeft,
+  });
+  syncProofScroll();
+  proofLayer.classList.remove('dim');
+}
+
+function syncProofScroll() {
+  if (!S.proof) return;
+  proofLayer.scrollTop = editor.scrollTop;
+  proofLayer.scrollLeft = editor.scrollLeft;
+}
+
+function toggleProof(force) {
+  S.proof = force ?? !S.proof;
+  if (S.proof) {
+    applyView();
+    runProof();
+    openProofPanel();
+  } else {
+    S.proofIssues = [];
+    proofLayer.replaceChildren();
+    $('#stProof').hidden = true;
+    if (S.panel === 'proof') closePanel();
+    applyView();
+  }
+}
+
+function openProofPanel() {
+  openPanel('proof');
+  renderProofPanel(0);
+}
+
+function renderProofPanel(focusIndex) {
+  if (S.panel !== 'proof') return;
+  const focused = document.activeElement?.closest?.('.pf-item')?.dataset.i;
+  if (focusIndex == null && focused != null) focusIndex = +focused;
+  const text = editor.value;
+  const issues = S.proofIssues;
+  const cats = { ...Proof.DEFAULT_CATS, ...S.settings.proofCats };
+  const counts = {};
+  issues.forEach((is) => { counts[is.cat] = (counts[is.cat] || 0) + 1; });
+
+  const chips = h('div', { class: 'chips' }, Proof.CATEGORIES.map(([k, label, desc]) => h('label', { class: `chip pf-chip pf-${k}`, title: desc },
+    h('input', {
+      type: 'checkbox', checked: !!cats[k],
+      onchange: (e) => { S.settings.proofCats = { ...cats, [k]: e.target.checked }; saveSettings(); runProof(); },
+    }),
+    `${label}${counts[k] ? ` ${counts[k]}` : ''}`)));
+
+  const body = h('div', { class: 'panel-body' });
+  if (!issues.length) body.append(h('p', { class: 'hint' }, '指摘はありません。'));
+  issues.slice(0, 300).forEach((is, i) => {
+    const ls = Math.max(text.lastIndexOf('\n', is.start - 1) + 1, is.start - 14);
+    let le = text.indexOf('\n', is.end);
+    if (le < 0 || le > is.end + 14) le = Math.min(text.length, is.end + 14);
+    const label = Proof.CATEGORIES.find(([k]) => k === is.cat)[1];
+    body.append(h('div', {
+      class: 'item pf-item', tabindex: '0', 'data-i': String(i),
+      onclick: (e) => { if (!e.target.closest('button')) selectIssue(i); },
+      onkeydown: (e) => {
+        if (e.target.closest('button')) return;
+        if (e.key === 'Enter') { e.preventDefault(); if (is.sugg.length) applyIssue(i, is.sugg[0]); else selectIssue(i); }
+        if (e.key === 'Delete') { e.preventDefault(); ignoreIssue(i, 'doc'); }
+      },
+    },
+    h('div', { class: 'main' },
+      h('div', {}, h('span', { class: `badge pf-${is.cat}` }, label), is.msg),
+      h('div', { class: 'pf-context' }, text.slice(ls, is.start), h('mark', { class: `pf-${is.cat}` }, text.slice(is.start, is.end)), text.slice(is.end, le)),
+      h('div', { class: 'row pf-actions' },
+        is.sugg.map((s) => h('button', { class: 'primary', onclick: () => applyIssue(i, s) }, s === '' ? '削除する' : `→ ${s}`)),
+        h('button', { title: 'この原稿では同じ指摘を出さない', onclick: () => ignoreIssue(i, 'doc') }, '無視'),
+        h('button', { title: 'すべての原稿で同じ指摘を出さない', onclick: () => ignoreIssue(i, 'all') }, '常に無視')))));
+  });
+  if (issues.length > 300) body.append(h('p', { class: 'hint' }, `ほか ${issues.length - 300}件`));
+
+  panel.replaceChildren(
+    panelHead(`校正（${issues.length}件）`),
+    h('div', { class: 'panel-tools' }, chips,
+      h('p', { class: 'hint', style: 'margin:0' }, '指摘を選ぶと本文の該当箇所へ移動します。Enter で1つ目の候補に修正、F8 で次の指摘へ。'),
+      h('button', { onclick: () => toggleProof(false) }, '校正モードを終わる')),
+    body);
+  if (focusIndex != null && issues.length) {
+    const items = body.querySelectorAll('.pf-item');
+    const target = items[Math.min(focusIndex, items.length - 1)];
+    target?.focus();
+    target?.scrollIntoView({ block: 'nearest' });
+  }
+}
+
+function selectIssue(i) {
+  const is = S.proofIssues[i];
+  if (!is) return;
+  const [s, e] = is.sel || [is.start, is.end];
+  editor.focus({ preventScroll: true });
+  editor.setSelectionRange(s, e);
+  revealCaret(s, 0.35);
+  updateSelection();
+  proofLayer.querySelectorAll('mark.current').forEach((m) => m.classList.remove('current'));
+  proofLayer.querySelector(`mark[data-i="${i}"]`)?.classList.add('current');
+}
+
+function applyIssue(i, suggestion) {
+  const is = S.proofIssues[i];
+  if (!is || editor.value.slice(is.start, is.end) !== is.text) { runProof(); return; }
+  replaceRange(is.start, is.end, suggestion);
+  runProof();
+  renderProofPanel(i);
+}
+
+async function ignoreIssue(i, scope) {
+  const is = S.proofIssues[i];
+  if (!is) return;
+  const key = `${is.rule}|${is.text}`;
+  if (scope === 'all') {
+    S.proofIgnoreGlobal.add(key);
+    await db.kvSet('proofIgnore', [...S.proofIgnoreGlobal]);
+  } else {
+    S.doc.proofIgnore = [...new Set([...(S.doc.proofIgnore || []), key])];
+    await db.update('docs', S.doc.id, (d) => { d.proofIgnore = S.doc.proofIgnore; return d; });
+  }
+  runProof();
+  renderProofPanel(i);
+}
+
+function proofNext(dir = 1) {
+  if (!S.proof) { S.proof = true; applyView(); }
+  runProof();
+  const list = S.proofIssues;
+  if (!list.length) { toast('指摘はありません'); return; }
+  const at = editor.selectionStart;
+  let i = dir > 0 ? list.findIndex((is) => is.start > at) : list.map((is) => is.start < at).lastIndexOf(true);
+  if (i < 0) i = dir > 0 ? 0 : list.length - 1;
+  selectIssue(i);
+  const is = list[i];
+  toast(`${is.msg}${is.sugg.length ? `（→ ${is.sugg[0] || '削除'}）` : ''}`, 3500);
+}
+
 // ---- 版の履歴
 
 async function openHistory(id) {
@@ -1030,7 +1223,7 @@ async function openHistory(id) {
 async function openSettings(section) {
   openPanel('settings');
   const st = S.settings;
-  const save = () => { saveSettings(); applyView(); updateStats(); };
+  const save = () => { saveSettings(); applyView(); updateStats(); if (S.proof) runProof(); };
   const select = (key, options, onChange) => h('select', {
     onchange: (e) => { st[key] = isNaN(+e.target.value) || e.target.value === '' ? e.target.value : +e.target.value; save(); onChange?.(); },
   }, options.map(([v, label]) => h('option', { value: String(v), selected: String(st[key]) === String(v) }, label)));
@@ -1108,6 +1301,7 @@ async function openSettings(section) {
     ['Alt+D', '辞書（選択した語を調べる）'], ['Ctrl+F / Ctrl+H', '検索／置換'], ['F3 / Shift+F3', '次／前を検索'],
     ['Alt+V', '縦書き・横書きの切り替え'], ['Alt+P', 'プレビュー（ルビ・傍点・縦中横）'], ['Alt+Z / F11', '集中モード'],
     ['Alt+R', 'ルビ記法を挿入 ｜漢字《かんじ》'], ['Alt+B', '傍点記法を挿入 《《強調》》'], ['Alt+T', '日付と時刻を挿入'],
+    ['F7 / Alt+K', '校正モード（誤字・表記ゆれに波線）'], ['F8 / Shift+F8', '次／前の指摘へ'],
     ['Alt+H', '版の履歴'], ['Alt+G', '目標文字数'], ['Alt+＋ / Alt+−', '文字を大きく／小さく'], ['Alt+,', '設定'], ['Esc', 'パネルを閉じる'],
   ];
 
@@ -1150,6 +1344,29 @@ async function openSettings(section) {
         h('button', { onclick: async () => { await saveSync(); await doSync({ manual: true }); } }, '今すぐ同期')),
       syncMsg),
     h('fieldset', { class: 'set', id: 'set-dict' }, h('legend', {}, 'オフライン辞書'), dictBox),
+    h('fieldset', { class: 'set', id: 'set-proof' }, h('legend', {}, '校正モード（F7）'),
+      h('p', { class: 'hint' }, '辞書を使わない規則で、誤字や表記ゆれの「候補」に波線を引きます。誤りとは限らないので、直すかどうかはご自身で判断してください。'),
+      Proof.CATEGORIES.map(([k, label, desc]) => h('label', { class: 'field check' },
+        h('input', {
+          type: 'checkbox', checked: !!{ ...Proof.DEFAULT_CATS, ...st.proofCats }[k],
+          onchange: (e) => { st.proofCats = { ...Proof.DEFAULT_CATS, ...st.proofCats, [k]: e.target.checked }; save(); },
+        }),
+        h('span', {}, `${label}：${desc}`))),
+      check('proofDialogue', '会話文（「」の中）は、文体・読みやすさのチェックから外す'),
+      field('長い文の目安', select('proofMaxLen', [[80, '80字'], [100, '100字'], [120, '120字'], [150, '150字'], [200, '200字']])),
+      h('div', { class: 'row' }, h('button', {
+        onclick: async () => {
+          if (!await confirmBox('「無視」にした指摘をすべて元に戻しますか？', '戻す')) return;
+          S.proofIgnoreGlobal = new Set();
+          await db.kvSet('proofIgnore', []);
+          for (const d of await db.getAll('docs')) {
+            if (d.proofIgnore?.length) await db.update('docs', d.id, (x) => { x.proofIgnore = []; return x; });
+          }
+          if (S.doc) S.doc.proofIgnore = [];
+          if (S.proof) runProof();
+          toast('無視した指摘を元に戻しました');
+        },
+      }, '無視リストを消去'))),
     h('fieldset', { class: 'set' }, h('legend', {}, 'バックアップ'),
       h('p', { class: 'hint' }, '全原稿（ゴミ箱を含む）を1つのファイルに書き出します。同期を使っていなくても、ときどき書き出しておくと安心です。'),
       h('div', { class: 'row' },
@@ -1447,6 +1664,13 @@ const COMMANDS = {
   sectionDown: () => moveSection(null, 1),
   headingPrev: () => jumpHeading(-1),
   headingNext: () => jumpHeading(1),
+  proof: () => {
+    if (!S.proof) toggleProof(true);
+    else if (S.panel !== 'proof') openProofPanel();
+    else toggleProof(false);
+  },
+  proofNext: () => proofNext(1),
+  proofPrev: () => proofNext(-1),
   bigger: () => { S.settings.fontSize = Math.min(48, S.settings.fontSize + 1); saveSettings(); applyView(); },
   smaller: () => { S.settings.fontSize = Math.max(12, S.settings.fontSize - 1); saveSettings(); applyView(); },
 };
@@ -1457,6 +1681,7 @@ const KEYMAP = {
   'A-v': 'vertical', 'A-p': 'preview', 'A-z': 'focus', 'F11': 'focus', 'A-,': 'settings', 'F1': 'help', 'A-/': 'help',
   'A-h': 'history', 'A-g': 'goal', 'A-t': 'date', 'A-r': 'ruby', 'A-b': 'bouten',
   'A-ArrowUp': 'sectionUp', 'A-ArrowDown': 'sectionDown', 'A-S-ArrowUp': 'headingPrev', 'A-S-ArrowDown': 'headingNext',
+  'F7': 'proof', 'A-k': 'proof', 'F8': 'proofNext', 'S-F8': 'proofPrev',
   'A-=': 'bigger', 'A-S-=': 'bigger', 'A-;': 'bigger', 'A--': 'smaller',
 };
 const EDITOR_ONLY = new Set(['date', 'ruby', 'bouten', 'sectionUp', 'sectionDown', 'headingPrev', 'headingNext', 'findNext', 'findPrev']);
@@ -1493,6 +1718,9 @@ $('#topbar').addEventListener('click', (e) => {
   if (b && COMMANDS[b.dataset.cmd]) COMMANDS[b.dataset.cmd]();
 });
 $('#stSync').addEventListener('click', () => doSync({ manual: true }));
+$('#stProof').addEventListener('click', () => (S.panel === 'proof' ? closePanel() : openProofPanel()));
+editor.addEventListener('scroll', syncProofScroll, { passive: true });
+window.addEventListener('resize', () => { if (S.proof) renderProofLayer(); });
 $('#stChars').addEventListener('click', () => S.doc && setGoal(S.doc.id));
 
 // ---------------------------------------------------------------- 起動
@@ -1536,6 +1764,7 @@ async function handleLaunchParams() {
 async function start() {
   await loadSettings();
   await loadToday();
+  S.proofIgnoreGlobal = new Set(await db.kvGet('proofIgnore', []));
   applyView();
   setSyncState(Sync.isConfigured(S.sync) ? 'pending' : 'none');
   db.requestPersist();
