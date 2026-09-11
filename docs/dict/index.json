@@ -1,0 +1,43 @@
+{
+  "version": "2026-09-11",
+  "entries": 177520,
+  "shards": [
+    {
+      "file": "ja-00.json.gz",
+      "bytes": 3110573,
+      "entries": 40000
+    },
+    {
+      "file": "ja-01.json.gz",
+      "bytes": 3201594,
+      "entries": 40000
+    },
+    {
+      "file": "ja-02.json.gz",
+      "bytes": 3245990,
+      "entries": 40000
+    },
+    {
+      "file": "ja-03.json.gz",
+      "bytes": 3089540,
+      "entries": 40000
+    },
+    {
+      "file": "ja-04.json.gz",
+      "bytes": 1294402,
+      "entries": 17520
+    }
+  ],
+  "sources": [
+    {
+      "name": "ウィクショナリー日本語版",
+      "license": "CC BY-SA 4.0",
+      "url": "https://ja.wiktionary.org/"
+    },
+    {
+      "name": "日本語WordNet 1.1",
+      "license": "Japanese WordNet License（NICT）",
+      "url": "https://bond-lab.github.io/wnja/"
+    }
+  ]
+}
