@@ -8,6 +8,7 @@ import { createDictView } from './dictview.js';
 import * as QR from './qr.js';
 import * as Print from './print.js';
 import * as Speech from './speech.js';
+import * as LocalFS from './localfs.js';
 
 const VERSION = '1.0.0';
 const $ = (s, root = document) => root.querySelector(s);
@@ -35,7 +36,8 @@ const WEBFONTS = {
 
 const S = {
   settings: { ...DEFAULTS },
-  sync: { owner: '', repo: '', branch: 'main', root: '', token: '' },
+  sync: { mode: 'github', owner: '', repo: '', branch: 'main', root: '', token: '', folderName: '', exclude: [] },
+  installPrompt: null,
   doc: null,
   savedContent: '',
   saveTimer: 0,
@@ -1901,6 +1903,43 @@ async function openSettings(section) {
   const syncInput = (key, label, props = {}) => field(label, h('input', { type: 'text', value: cfg[key] || '', autocomplete: 'off', ...props, oninput: (e) => { cfg[key] = e.target.value.trim(); } }));
   const syncMsg = h('p', { class: 'hint' }, S.syncError ? `前回のエラー：${S.syncError}` : (await db.kvGet('lastSync')) ? `最終同期：${new Date(await db.kvGet('lastSync')).toLocaleString('ja-JP')}` : '');
   const saveSync = async () => { S.sync = { ...cfg, branch: cfg.branch || 'main' }; await db.kvSet('sync', S.sync); setSyncState(Sync.isConfigured(S.sync) ? 'pending' : 'none'); };
+  const folderMode = () => cfg.mode === 'folder';
+  const githubBox = h('div', { hidden: folderMode() },
+    h('p', { class: 'hint' }, '原稿用の非公開リポジトリと、そのリポジトリだけに書き込めるトークンを入れます。手順はセットアップ手順書を見てください。トークンはこの端末の中にだけ保存されます。'),
+    syncInput('owner', 'ユーザー名', { placeholder: '例：aji-daze' }),
+    syncInput('repo', 'リポジトリ', { placeholder: '例：pomera-data' }),
+    syncInput('branch', 'ブランチ', { placeholder: 'main' }),
+    syncInput('root', 'フォルダ', { placeholder: '空欄でリポジトリ全体' }),
+    syncInput('token', 'トークン', { type: 'password', placeholder: 'github_pat_…' }));
+  const folderLabel = h('p', { class: 'hint' }, cfg.folderName ? `選んだフォルダ：${cfg.folderName}` : 'フォルダはまだ選ばれていません。');
+  const folderBox = h('div', { hidden: !folderMode() },
+    h('p', { class: 'hint' }, 'パソコンの Chrome／Edge で使えます。OneDrive フォルダそのもの（例：C:\\Users\\あなたの名前\\OneDrive）を選ぶと、Obsidian の原稿を直接読み書きします。トークンも通信も要りません。タブレット・スマホへは、PC の同期（2_同期する.bat・タスク）が GitHub 経由で届けます。'),
+    folderLabel,
+    h('div', { class: 'row' }, h('button', {
+      onclick: async () => {
+        try {
+          const handle = await LocalFS.pickFolder();
+          Object.assign(cfg, { mode: 'folder', folderName: handle.name });
+          await saveSync();
+          folderLabel.textContent = `選んだフォルダ：${handle.name}`;
+          syncMsg.textContent = '確認中…';
+          const r = await Sync.testConnection(S.sync);
+          syncMsg.textContent = r.warn ? `注意：${r.warn}` : `${r.info}「今すぐ同期」で原稿を取り込みます。`;
+        } catch (e) {
+          if (e.name !== 'AbortError') syncMsg.textContent = `フォルダを開けません：${e.message}`;
+        }
+      },
+    }, 'フォルダを選ぶ')),
+    field('読まないフォルダ', h('input', {
+      type: 'text', value: (cfg.exclude?.length ? cfg.exclude : LocalFS.DEFAULT_EXCLUDE).join('、'),
+      title: 'この名前のフォルダは、どの階層にあっても読みません（「、」区切り）。PC の pc/config.json の exclude と同じにしてください',
+      oninput: (e) => { cfg.exclude = e.target.value.split(/[、,，]/).map((s) => s.trim()).filter(Boolean); },
+    })));
+  const modeSelect = LocalFS.supported() || folderMode()
+    ? field('同期のしかた', h('select', {
+      onchange: (e) => { cfg.mode = e.target.value; githubBox.hidden = folderMode(); folderBox.hidden = !folderMode(); syncMsg.textContent = ''; },
+    }, [['github', 'GitHub 経由（タブレット・スマホ）'], ['folder', 'PC のフォルダを直接（パソコン）']].map(([v, label]) => h('option', { value: v, selected: (cfg.mode || 'github') === v }, label))))
+    : null;
 
   // 辞書
   const dictBox = h('div');
@@ -2021,13 +2060,10 @@ async function openSettings(section) {
       h('p', { class: 'hint' }, Speech.japaneseVoices().length
         ? `この端末には日本語の声が${Speech.japaneseVoices().length}種類あります。「静かな低音」は男性の声があれば自動で選びます。`
         : '日本語の声が見つかりません。端末の設定「テキスト読み上げ」で、日本語の音声データを入れてください。')),
-    h('fieldset', { class: 'set', id: 'set-sync' }, h('legend', {}, '同期（GitHub 経由で PC の Obsidian へ）'),
-      h('p', { class: 'hint' }, '原稿用の非公開リポジトリと、そのリポジトリだけに書き込めるトークンを入れます。手順はセットアップ手順書を見てください。トークンはこの端末の中にだけ保存されます。'),
-      syncInput('owner', 'ユーザー名', { placeholder: '例：aji-daze' }),
-      syncInput('repo', 'リポジトリ', { placeholder: '例：pomera-data' }),
-      syncInput('branch', 'ブランチ', { placeholder: 'main' }),
-      syncInput('root', 'フォルダ', { placeholder: '空欄でリポジトリ全体' }),
-      syncInput('token', 'トークン', { type: 'password', placeholder: 'github_pat_…' }),
+    h('fieldset', { class: 'set', id: 'set-sync' }, h('legend', {}, '同期（Obsidian の原稿とそろえる）'),
+      modeSelect,
+      githubBox,
+      folderBox,
       field('自動同期', select('autoSyncMin', [[2, '2分ごと'], [5, '5分ごと'], [15, '15分ごと'], [60, '1時間ごと'], [0, 'しない（Ctrl+S のときだけ）']])),
       h('div', { class: 'row' },
         h('button', { class: 'primary', onclick: async () => { await saveSync(); toast('保存しました'); } }, '保存'),
@@ -2037,12 +2073,24 @@ async function openSettings(section) {
             syncMsg.textContent = '確認中…';
             try {
               const r = await Sync.testConnection(S.sync);
-              syncMsg.textContent = r.warn ? `注意：${r.warn}` : '接続できました。書き込みもできます。';
+              syncMsg.textContent = r.warn ? `注意：${r.warn}` : (r.info || '接続できました。書き込みもできます。');
             } catch (e) { syncMsg.textContent = `接続できません：${e.message}`; }
           },
         }, '接続テスト'),
         h('button', { onclick: async () => { await saveSync(); await doSync({ manual: true }); } }, '今すぐ同期')),
       syncMsg),
+    h('fieldset', { class: 'set', id: 'set-install' }, h('legend', {}, 'アプリとして入れる（パソコン・タブレット）'),
+      h('p', { class: 'hint' }, isInstalled()
+        ? 'いまはアプリとして起動しています。'
+        : S.installPrompt
+          ? '入れると、スタートメニュー・デスクトップ・ホーム画面から、ブラウザの枠なしで起動できます。オフラインでも動きます。'
+          : 'Chrome／Edge のアドレスバー右端の「インストール」アイコン、またはメニューの「アプリをインストール」（「ホーム画面に追加」）から入れられます。'),
+      S.installPrompt && !isInstalled()
+        ? h('div', { class: 'row' }, h('button', {
+          class: 'primary',
+          onclick: async () => { const p = S.installPrompt; S.installPrompt = null; p.prompt(); await p.userChoice.catch(() => null); closePanel(); },
+        }, 'インストール'))
+        : null),
     h('fieldset', { class: 'set', id: 'set-dict' }, h('legend', {}, 'オフライン辞書'), dictBox),
     h('fieldset', { class: 'set', id: 'set-proof' }, h('legend', {}, '校正モード（F7）'),
       h('p', { class: 'hint' }, '辞書を使わない規則で、誤字や表記ゆれの「候補」に波線を引きます。誤りとは限らないので、直すかどうかはご自身で判断してください。'),
@@ -2199,13 +2247,30 @@ function setSyncState(kind) {
   btn.classList.toggle('error', kind === 'error');
 }
 
-async function doSync({ manual = false } = {}) {
+// PC のフォルダへの許可は、ブラウザを起動し直すと確認に戻ることがある。許可はボタンなどの操作の直後にしか求められない
+async function ensureFolderPermission(manual) {
+  const handle = await LocalFS.getHandle();
+  if (handle && await LocalFS.permission(handle, manual).catch(() => false)) return true;
+  S.lastSyncTry = Date.now();
+  S.syncError = handle ? 'フォルダへの接続の許可が必要です' : '同期するフォルダが選ばれていません';
+  setSyncState('error');
+  if (manual || !S.folderAsked) {
+    S.folderAsked = true;
+    if (handle) toast(`「${handle.name}」フォルダとの同期を再開するには、接続を許可してください`, 0, ['接続', () => doSync({ manual: true })]);
+    else toast('同期するフォルダを選んでください', 0, ['選ぶ', () => openSettings('sync')]);
+  }
+  return false;
+}
+
+async function doSync({ manual = false, force = false } = {}) {
   if (!Sync.isConfigured(S.sync)) {
     if (manual) { toast('同期が未設定です'); openSettings('sync'); }
     return;
   }
+  const folder = Sync.isFolderMode(S.sync);
+  if (folder && !await ensureFolderPermission(manual)) return;
   S.lastSyncTry = Date.now();
-  if (!navigator.onLine) {
+  if (!folder && !navigator.onLine) {
     setSyncState('offline');
     if (manual) toast('オフラインです。つながったら自動で同期します');
     return;
@@ -2216,6 +2281,7 @@ async function doSync({ manual = false } = {}) {
   setSyncState('running');
   try {
     const st = await Sync.sync(S.sync, {
+      force,
       onPulled,
       onTrashed,
       onProgress: (i, n) => { if (n > 30 && i % 5 === 0) $('#stSync').textContent = `同期中 ${i}/${n}`; },
@@ -2229,7 +2295,8 @@ async function doSync({ manual = false } = {}) {
     if (st.pulled) parts.push(`受信${st.pulled}`);
     if (st.deleted) parts.push(`削除${st.deleted}`);
     if (st.conflicts.length) {
-      toast(`両方で書き換えられた原稿が${st.conflicts.length}件ありました。PC側の版を「(競合 PC版 …)」として残しました`, 8000, ['一覧', openFiles]);
+      const other = folder ? 'フォルダ側の版を「(競合 ファイル版 …)」' : 'PC側の版を「(競合 PC版 …)」';
+      toast(`両方で書き換えられた原稿が${st.conflicts.length}件ありました。${other}として残しました`, 8000, ['一覧', openFiles]);
     } else if (manual || parts.length) {
       toast(parts.length ? `同期しました（${parts.join('・')}）` : '同期済みです', 2000);
     }
@@ -2238,6 +2305,10 @@ async function doSync({ manual = false } = {}) {
     const first = S.syncError !== e.message;
     S.syncError = e.message;
     setSyncState(e.offline ? 'offline' : 'error');
+    if (e.massDelete && manual && !force) {
+      if (await confirmBox(`${e.message}。それでも同期しますか？（見つからない原稿は、この端末のゴミ箱に移します）`, '同期する', true)) await doSync({ manual: true, force: true });
+      return;
+    }
     if (manual || (first && !e.offline)) toast(`同期できませんでした：${e.message}`, 6000);
   }
 }
@@ -2252,7 +2323,7 @@ function onPulled(id, oldContent, newContent) {
     S.savedContent = newContent;
     if (!focused) editor.blur();
     updateStats();
-    toast('PCでの変更を取り込みました', 2500);
+    toast(Sync.isFolderMode(S.sync) ? 'フォルダ側（Obsidian など）での変更を取り込みました' : 'PCでの変更を取り込みました', 2500);
   } else {
     // 取り込む瞬間に書き足していた: 次の同期で両方の版を残す
     db.update('docs', id, (d) => { d.baseSha = null; return d; });
@@ -2262,7 +2333,7 @@ function onPulled(id, oldContent, newContent) {
 
 async function onTrashed(id) {
   if (S.doc?.id !== id) return;
-  toast('この原稿はPC側で削除されたため、ゴミ箱に移しました', 5000);
+  toast(`この原稿は${Sync.isFolderMode(S.sync) ? 'フォルダ' : 'PC'}側で削除されたため、ゴミ箱に移しました`, 5000);
   await openFallback();
 }
 
@@ -2276,13 +2347,30 @@ async function hasUnsynced() {
 }
 
 setInterval(() => {
-  const min = S.settings.autoSyncMin;
+  // PC のフォルダは通信が要らないので、自動同期がオンなら1分ごとに Obsidian 側の変更を見る
+  const min = S.settings.autoSyncMin && (Sync.isFolderMode(S.sync) ? 1 : S.settings.autoSyncMin);
   if (!min || document.hidden || S.syncState === 'running') return;
   if (Date.now() - S.lastSyncTry >= min * 60 * 1000) doSync();
 }, 30 * 1000);
 
-window.addEventListener('online', () => doSync());
-window.addEventListener('offline', () => setSyncState(Sync.isConfigured(S.sync) ? 'offline' : 'none'));
+window.addEventListener('online', () => { if (!Sync.isFolderMode(S.sync)) doSync(); });
+window.addEventListener('offline', () => { if (!Sync.isFolderMode(S.sync)) setSyncState(Sync.isConfigured(S.sync) ? 'offline' : 'none'); });
+
+// パソコンで Obsidian などの窓と行き来するとき: 離れる前に書き出し、戻ったら取り込む（画面は隠れないので visibilitychange が来ない）
+window.addEventListener('blur', async () => {
+  if (!Sync.isFolderMode(S.sync) || !S.settings.autoSyncMin) return;
+  await saveNow();
+  if (S.unsynced && S.syncState !== 'running') doSync();
+});
+window.addEventListener('focus', () => {
+  if (!Sync.isFolderMode(S.sync) || !S.settings.autoSyncMin || S.syncState === 'running') return;
+  if (Date.now() - S.lastSyncTry > 10 * 1000) doSync();
+});
+
+// アプリとして入れる（パソコンの Chrome／Edge、Android の Chrome）
+window.addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); S.installPrompt = e; });
+window.addEventListener('appinstalled', () => { S.installPrompt = null; toast('アプリとして入れました。スタートメニューやデスクトップから起動できます', 5000); });
+const isInstalled = () => matchMedia('(display-mode: standalone), (display-mode: fullscreen), (display-mode: window-controls-overlay)').matches;
 
 document.addEventListener('visibilitychange', async () => {
   if (document.hidden) {
