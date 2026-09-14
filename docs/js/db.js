@@ -1,6 +1,6 @@
 // IndexedDB の薄いラッパー。原稿・設定・辞書はすべて端末内に保存する。
 const DB_NAME = 'pomera-tab';
-const DB_VER = 1;
+const DB_VER = 2;
 let dbp = null;
 
 export function openDB() {
@@ -17,6 +17,11 @@ export function openDB() {
       mk('kv');                                  // 設定など
       const dict = mk('dict', { keyPath: 'k' }); // オフライン辞書: 見出し語 → 読み・語義・類語
       if (dict) dict.createIndex('r', 'r', { multiEntry: true });
+      const browse = mk('browse', { keyPath: 'i' }); // 紙面: 五十音順の通し番号 → 見出し・表記・短い語義
+      if (browse) {
+        browse.createIndex('b', 'b'); // 並べ替え用の読み（清音・直音にそろえたもの）
+        browse.createIndex('k', 'k'); // 辞書のキー
+      }
     };
     req.onsuccess = () => resolve(req.result);
     req.onerror = () => reject(req.error);
@@ -45,6 +50,24 @@ export async function count(name) { return wrap((await store(name)).count()); }
 
 export async function getByIndex(name, index, value, limit) {
   return wrap((await store(name)).index(index).getAll(value, limit));
+}
+
+export async function getRange(name, lo, hi) {
+  return wrap((await store(name)).getAll(IDBKeyRange.bound(lo, hi)));
+}
+
+export async function getIndexRange(name, index, lo, hi, limit) {
+  return wrap((await store(name)).index(index).getAll(IDBKeyRange.bound(lo, hi), limit));
+}
+
+// 索引の値が lower 以上の最初の1件
+export async function firstFrom(name, index, lower) {
+  const s = await store(name);
+  return new Promise((resolve, reject) => {
+    const req = s.index(index).openCursor(IDBKeyRange.lowerBound(lower));
+    req.onsuccess = () => resolve(req.result ? req.result.value : null);
+    req.onerror = () => reject(req.error);
+  });
 }
 
 // 前方一致でキーだけを取り出す（キーが文字列のストア用）

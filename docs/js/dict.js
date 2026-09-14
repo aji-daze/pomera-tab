@@ -58,12 +58,55 @@ export async function installDict(onProgress) {
   }
   const info = { version: index.version, sources: index.sources, entries: count, installed: Date.now() };
   await db.kvSet('dict.info', info);
+  if (index.browse) await installBrowse(onProgress, index);
   return info;
 }
 
 export async function removeDict() {
   await db.clear('dict');
+  await db.clear('browse');
   await db.kvSet('dict.info', null);
+  await db.kvSet('browse.info', null);
+}
+
+// ---- 紙面（五十音順に眺める）用のデータ
+
+export const browseInfo = () => db.kvGet('browse.info', null);
+
+const SMALL = { ぁ: 'あ', ぃ: 'い', ぅ: 'う', ぇ: 'え', ぉ: 'お', っ: 'つ', ゃ: 'や', ゅ: 'ゆ', ょ: 'よ', ゎ: 'わ', ゕ: 'か', ゖ: 'け' };
+const DAKU_FROM = 'がぎぐげござじずぜぞだぢづでどばびぶべぼぱぴぷぺぽゔ';
+const DAKU_TO = 'かきくけこさしすせそたちつてとはひふへほはひふへほう';
+const VOWELS = { あ: 'あかさたなはまやらわ', い: 'いきしちにひみりゐ', う: 'うくすつぬふむゆる', え: 'えけせてねへめれゑ', お: 'おこそとのほもよろを' };
+const VOWEL_OF = Object.fromEntries(Object.entries(VOWELS).flatMap(([v, cs]) => [...cs].map((c) => [c, v])));
+
+// tools/build_dict.py の collate() と同じ規則で、並べ替え用の読みを作る
+export function baseOf(yomi) {
+  const out = [];
+  for (const ch of yomi) {
+    if (ch === '・') continue;
+    const hi = ch >= 'ァ' && ch <= 'ヶ' ? String.fromCharCode(ch.charCodeAt(0) - 0x60) : ch;
+    if (hi === 'ー') { out.push(out.length ? (VOWEL_OF[out[out.length - 1]] || 'ー') : 'ー'); continue; }
+    const s = SMALL[hi] || hi;
+    const k = DAKU_FROM.indexOf(s);
+    out.push(k >= 0 ? DAKU_TO[k] : s);
+  }
+  return out.join('');
+}
+
+export async function installBrowse(onProgress, index = null) {
+  index = index || await publishedDict();
+  if (!index?.browse) throw new Error('紙面データが公開されていません');
+  const { file, bytes } = index.browse;
+  const rows = await fetchJson(`dict/${file}`, (n) => onProgress?.('紙面をダウンロード中', n, bytes));
+  onProgress?.('紙面を取り込み中', bytes, bytes);
+  await db.clear('browse');
+  await db.kvSet('browse.info', null);
+  for (let i = 0; i < rows.length; i += 4000) {
+    await db.bulkPut('browse', rows.slice(i, i + 4000).map(([y, h, p, d, k], j) => ({ i: i + j, y, h, p, d, k, b: baseOf(y) })));
+  }
+  const info = { version: index.version, entries: rows.length, installed: Date.now() };
+  await db.kvSet('browse.info', info);
+  return info;
 }
 
 const toHira = (s) => s.replace(/[ァ-ヶ]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 0x60));

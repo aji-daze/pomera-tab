@@ -4,6 +4,7 @@ import * as T from './text.js';
 import * as Sync from './sync.js';
 import * as Dict from './dict.js';
 import * as Proof from './proof.js';
+import { createDictView } from './dictview.js';
 
 const VERSION = '1.0.0';
 const $ = (s, root = document) => root.querySelector(s);
@@ -18,6 +19,7 @@ const DEFAULTS = {
   typewriter: false, wakeLock: true, focusStatus: true, autoSyncMin: 5, fileSort: 'name',
   proofCats: { ...Proof.DEFAULT_CATS }, proofDialogue: true, proofMaxLen: 120,
   memoFolder: 'Obsidian/ポメラ/メモ', driveName: 'OneDrive',
+  dvVertical: true, dvCols: 3, dvFont: 15,
 };
 const OPEN_BRACKETS = '「『（(〈《【［〔“‘';
 const WEBFONTS = {
@@ -61,6 +63,16 @@ const S = {
   proofTimer: 0,
   proofIgnoreGlobal: new Set(),
 };
+
+const dictView = createDictView({
+  h,
+  toast,
+  settings: () => S.settings,
+  saveSettings: () => saveSettings(),
+  insert: (text) => insertText(text),
+  exportVocab: (items) => exportVocab(items),
+  onClose: () => { if (!S.panel) editor.focus({ preventScroll: true }); },
+});
 
 // ---------------------------------------------------------------- 小道具
 
@@ -460,6 +472,25 @@ async function newDocDialog() {
   await createDoc({ folder: r.folder, name: r.name || T.dateStamp(new Date(), false) });
 }
 
+// 辞書の単語帳を、すぐメモの保存先と同じ階層の「単語帳」原稿に書き出す（Obsidian にも同期される）
+async function exportVocab(items) {
+  const folder = T.safeFolder(S.settings.memoFolder.split('/').slice(0, -1).join('/')) || 'ポメラ';
+  const lines = items.map((v) => `- ${v.h ? `${v.h.split('・')[0]}（${v.y}）` : v.y}${v.p ? `〘${v.p}〙` : ''}: ${v.d}${v.known ? '　✓覚えた' : ''}`);
+  const content = `# 単語帳\n\n${lines.join('\n')}\n`;
+  const existing = (await activeDocs()).find((d) => d.folder === folder && d.name === '単語帳');
+  if (!existing) {
+    await createDoc({ folder, name: '単語帳', content, open: false });
+  } else if (S.doc?.id === existing.id) {
+    applyText(content, 0);
+    await saveNow();
+  } else {
+    await db.update('docs', existing.id, (d) => { d.content = content; d.updated = Date.now(); return d; });
+  }
+  S.unsynced = true;
+  setSyncState('pending');
+  toast(`「${folder}/単語帳」に${items.length}語を書き出しました`, 3000);
+}
+
 async function quickMemo(text = '') {
   await createDoc({ folder: S.settings.memoFolder, name: T.compactStamp(), content: text });
 }
@@ -843,7 +874,10 @@ async function openDict(query) {
   });
   const body = h('div', { class: 'panel-body', id: 'dictBody' });
   const pick = h('div', { class: 'pickbar', id: 'pickbar', hidden: true });
-  panel.append(panelHead('辞書'), h('div', { class: 'panel-tools' }, input), body, pick);
+  panel.append(panelHead('辞書'),
+    h('div', { class: 'panel-tools' }, input,
+      h('button', { onclick: () => { const q = input.value; closePanel(); dictView.open(q); } }, '紙の辞書で開く')),
+    body, pick);
   input.focus();
   if (q) runLookup(q);
   else renderDictHome(body);
@@ -1291,6 +1325,7 @@ async function openSettings(section) {
   const dictBox = h('div');
   const renderDictBox = async () => {
     const info = await Dict.dictInfo();
+    const browse = await Dict.browseInfo();
     const published = await Dict.publishedDict();
     const progress = h('progress', { max: '1', value: '0', hidden: true });
     const status = h('p', { class: 'hint' });
@@ -1308,6 +1343,9 @@ async function openSettings(section) {
       h('p', { class: 'hint' }, info
         ? `取り込み済み：${fmt(info.entries)}語（${new Date(info.installed).toLocaleDateString('ja-JP')}）`
         : '未導入です。Wi-Fi のあるところで一度だけ取り込めば、以後はオフラインで引けます。'),
+      info ? h('p', { class: 'hint' }, browse
+        ? `紙面（五十音順）：${fmt(browse.entries)}語`
+        : '紙面（五十音順に眺める）のデータはまだです。上の「辞書」から紙の辞書を開くと取り込めます。') : null,
       published ? h('p', { class: 'hint' }, `公開中の辞書データ：${(published.shards.reduce((a, s) => a + s.bytes, 0) / 1048576).toFixed(1)} MB（版 ${published.version}）`) : h('p', { class: 'hint' }, navigator.onLine ? '辞書データが公開されていません。' : 'オフラインのため、公開中の辞書を確認できません。'),
       h('div', { class: 'row' },
         h('button', { class: 'primary', disabled: !published, onclick: install }, info ? '最新版を取り込み直す' : '辞書を取り込む'),
@@ -1344,7 +1382,8 @@ async function openSettings(section) {
   const keys = [
     ['Ctrl+S', '保存して同期'], ['Alt+O', 'ファイル一覧'], ['Alt+N', '新しい原稿'], ['Alt+M', 'すぐメモ（メモ フォルダに新規）'],
     ['Alt+L', 'アウトライン'], ['Alt+↑ / Alt+↓', 'カーソルのある節を前後へ移動'], ['Alt+Shift+↑ / ↓', '前後の見出しへ移動'],
-    ['Alt+D', '辞書（選択した語を調べる）'], ['Ctrl+F / Ctrl+H', '検索／置換'], ['F3 / Shift+F3', '次／前を検索'],
+    ['Alt+D', '紙の辞書を開く（語を選んでいれば、その語を横のパネルで調べる）'],
+    ['辞書で ← → / Space', 'ページをめくる（縦組みは ← が次のページ）'], ['辞書で / ・ T ・ R ・ B', '検索・今日の言葉・パッと開く・単語帳'], ['Ctrl+F / Ctrl+H', '検索／置換'], ['F3 / Shift+F3', '次／前を検索'],
     ['Alt+V', '縦書き・横書きの切り替え'], ['Alt+P', 'プレビュー（ルビ・傍点・縦中横）'], ['Alt+Z / F11', '集中モード'],
     ['Alt+R', 'ルビ記法を挿入 ｜漢字《かんじ》'], ['Alt+B', '傍点記法を挿入 《《強調》》'], ['Alt+T', '日付と時刻を挿入'],
     ['F7 / Alt+K', '校正モード（誤字・表記ゆれに波線）'], ['F8 / Shift+F8', '次／前の指摘へ'],
@@ -1693,7 +1732,11 @@ const COMMANDS = {
   memo: () => quickMemo(),
   rename: () => S.doc && renameDialog(S.doc.id),
   outline: () => togglePanel('outline', openOutline),
-  dict: () => togglePanel('dict', () => openDict()),
+  dict: () => {
+    if (dictView.isOpen()) { dictView.close(); return; }
+    if (document.activeElement === editor && editor.selectionStart !== editor.selectionEnd) togglePanel('dict', () => openDict());
+    else { closePanel(); dictView.open(); }
+  },
   find: () => openFind(false),
   replace: () => openFind(true),
   findNext: () => findNext(1),
@@ -1744,6 +1787,7 @@ const EDITOR_ONLY = new Set(['date', 'ruby', 'bouten', 'sectionUp', 'sectionDown
 document.addEventListener('keydown', (e) => {
   if (e.isComposing || e.keyCode === 229) return;
   if ($('#dialog').open) return;
+  if (dictView.isOpen() && !(e.altKey && e.code === 'KeyD') && dictView.handleKey(e)) return;
   let key = e.key;
   if (/^Key[A-Z]$/.test(e.code)) key = e.code.slice(3).toLowerCase();
   else if (/^Digit\d$/.test(e.code)) key = e.code.slice(5);
@@ -1842,6 +1886,7 @@ async function start() {
   keepAwake();
 
   if ('serviceWorker' in navigator) {
+    const hadController = !!navigator.serviceWorker.controller; // 初回の登録では再読み込みしない
     const reg = await navigator.serviceWorker.register('sw.js').catch(() => null);
     if (reg) {
       const notify = (worker) => toast('新しいバージョンがあります', 0, ['更新', () => worker.postMessage('skipWaiting')]);
@@ -1852,7 +1897,7 @@ async function start() {
       });
       let reloading = false;
       navigator.serviceWorker.addEventListener('controllerchange', async () => {
-        if (reloading) return;
+        if (reloading || !hadController) return;
         reloading = true;
         await saveNow();
         location.reload();
