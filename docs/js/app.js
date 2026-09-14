@@ -1486,6 +1486,75 @@ async function recordLog() {
   await db.kvSet('writeLog', log);
 }
 
+// 執筆記録の同期: 端末ごとに「執筆記録/端末名.md」へ表として書き出し、ほかの端末のファイルと合算して表示する。
+// 各端末は自分のファイルだけを書き換えるので、同期で競合しない。
+function defaultDeviceName() {
+  const coarse = matchMedia('(pointer: coarse)').matches;
+  return coarse ? (Math.min(screen.width, screen.height) < 600 ? 'スマホ' : 'タブレット') : 'PC';
+}
+
+function deviceLogFolder() {
+  const parent = S.settings.memoFolder.split('/').slice(0, -1).join('/') || 'ポメラ';
+  return T.safeFolder(`${parent}/執筆記録`);
+}
+
+const ownDeviceName = () => T.safeName(S.settings.deviceName || defaultDeviceName());
+const plainNum = (n) => `${n < 0 ? '-' : ''}${fmt(Math.abs(n || 0))}`;
+
+async function writeLogDoc() {
+  const log = await db.kvGet('writeLog', {});
+  const dates = Object.keys(log).filter((k) => log[k].added || log[k].net || log[k].minutes).sort().reverse();
+  if (!dates.length) return;
+  const name = ownDeviceName();
+  const folder = deviceLogFolder();
+  const content = [
+    `# 執筆記録（${name}）`,
+    '',
+    'ポメラタブが自動で書き出す、この端末の執筆記録です。同期のたびに上書きされるので、ここは編集しないでください。',
+    '',
+    '| 日付 | 書いた字数 | 増減 | 時間（分） |',
+    '|---|---:|---:|---:|',
+    ...dates.map((k) => `| ${k} | ${plainNum(log[k].added)} | ${plainNum(log[k].net)} | ${plainNum(log[k].minutes)} |`),
+    '',
+  ].join('\n');
+  const existing = (await activeDocs()).find((d) => d.folder === folder && d.name === name && d.ext === '.md');
+  if (existing) {
+    if (existing.content === content || S.doc?.id === existing.id) return; // 変わっていない／開いて見ている間は書き換えない
+    await db.update('docs', existing.id, (d) => { d.content = content; d.updated = Date.now(); return d; });
+  } else {
+    await db.put('docs', Sync.newDoc({ folder, name, content }));
+  }
+  S.unsynced = true;
+}
+
+async function collectLogs() {
+  const own = ownDeviceName();
+  const folder = deviceLogFolder();
+  const merged = {};
+  const devices = [own];
+  const add = (date, device, v) => {
+    const m = merged[date] || (merged[date] = { added: 0, net: 0, minutes: 0, devices: {} });
+    m.added += v.added || 0;
+    m.net += v.net || 0;
+    m.minutes += v.minutes || 0;
+    if (v.added) m.devices[device] = (m.devices[device] || 0) + v.added;
+  };
+  for (const [k, v] of Object.entries(await db.kvGet('writeLog', {}))) add(k, own, v); // 自分の分は端末内の最新の記録を使う
+  const num = (s) => Number(s.replace(/,/g, ''));
+  for (const d of await activeDocs()) {
+    if (d.folder !== folder || d.name === own) continue;
+    let rows = 0;
+    for (const line of d.content.split('\n')) {
+      const m = line.match(/^\|\s*(\d{4}-\d{2}-\d{2})\s*\|\s*(-?[\d,]+)\s*\|\s*(-?[\d,]+)\s*\|\s*(-?[\d,]+)\s*\|/);
+      if (!m) continue;
+      add(m[1], d.name, { added: num(m[2]), net: num(m[3]), minutes: num(m[4]) });
+      rows++;
+    }
+    if (rows) devices.push(d.name);
+  }
+  return { log: merged, devices };
+}
+
 function niceMax(v) {
   if (v <= 0) return 1000;
   const p = 10 ** Math.floor(Math.log10(v));
@@ -1498,7 +1567,8 @@ const WEEKDAY = '日月火水木金土';
 async function openRecord() {
   await saveNow();
   await recordLog();
-  const log = await db.kvGet('writeLog', {});
+  await writeLogDoc();
+  const { log, devices } = await collectLogs();
   openPanel('record');
   const body = h('div', { class: 'panel-body' });
   panel.append(panelHead('執筆記録'), body);
@@ -1527,7 +1597,7 @@ async function openRecord() {
     recordChart(days),
     recordTable(days),
     recordMonths(log),
-    h('p', { class: 'hint' }, '「書いた字数」は書き足した分の合計です（消した分は差し引きません）。記録はこの端末ごとに保存されます。'));
+    h('p', { class: 'hint' }, `${devices.length > 1 ? `${devices.join('・')}の${devices.length}台を合計しています。` : ''}「書いた字数」は書き足した分の合計です（消した分は差し引きません）。同期を設定していると、各端末の記録が「${deviceLogFolder()}」に書き出され、ほかの端末の分も合わせて表示します。`));
 }
 
 function recordChart(days) {
@@ -1568,7 +1638,12 @@ function recordChart(days) {
     const on = () => {
       off();
       svg.querySelector(`.bar[data-i="${i}"]`)?.classList.add('on');
-      tip.replaceChildren(h('strong', {}, `${fmt(d.added)}字`), h('span', {}, `${label}${d.minutes ? `・約${d.minutes}分` : ''}`));
+      const byDevice = Object.entries(d.devices || {});
+      tip.replaceChildren(...[
+        h('strong', {}, `${fmt(d.added)}字`),
+        h('span', {}, `${label}${d.minutes ? `・約${d.minutes}分` : ''}`),
+        byDevice.length > 1 ? h('span', { class: 'tip-devices' }, byDevice.map(([n, v]) => `${n} ${fmt(v)}字`).join('・')) : null,
+      ].filter(Boolean));
       tip.hidden = false;
       const scale = svg.getBoundingClientRect().width / W || 1;
       tip.style.left = `${Math.min(Math.max(cx * scale, 70), W * scale - 70)}px`;
@@ -1857,6 +1932,21 @@ async function openSettings(section) {
       check('autoIndent', '改行したとき段落の字下げ（全角空白）を引き継ぐ。「 などで始めると字下げを外す'),
       check('tabFullwidth', 'Tab キーで全角空白を入れる'),
       check('chapters', '「第一章」「プロローグ」などの行も見出しとして扱う'),
+      field('この端末の名前', h('input', {
+        type: 'text', value: st.deviceName || '', placeholder: '例：タブレット',
+        title: '執筆記録を端末ごとに分けて同期するための名前です。端末ごとに違う名前にしてください',
+        onchange: async (e) => {
+          const oldName = ownDeviceName();
+          const newName = T.safeName(e.target.value.trim() || defaultDeviceName());
+          e.target.value = newName;
+          if (newName === oldName) return;
+          const own = (await activeDocs()).find((d) => d.folder === deviceLogFolder() && d.name === oldName);
+          st.deviceName = newName;
+          saveSettings();
+          if (own) await relocateDoc(own.id, own.folder, newName);
+          toast(`執筆記録のファイルを「${newName}」にしました`, 2500);
+        },
+      })),
       field('すぐメモの保存先', h('input', {
         type: 'text', value: st.memoFolder, placeholder: '例：Obsidian/ポメラ/メモ',
         onchange: (e) => { st.memoFolder = T.safeFolder(e.target.value) || 'メモ'; e.target.value = st.memoFolder; saveSettings(); },
@@ -2022,6 +2112,7 @@ async function doSync({ manual = false } = {}) {
     if (manual) toast('オフラインです。つながったら自動で同期します');
     return;
   }
+  await writeLogDoc();
   await saveNow();
   const before = S.saveCount;
   setSyncState('running');
@@ -2103,6 +2194,7 @@ document.addEventListener('visibilitychange', async () => {
   } else {
     keepAwake();
     if (S.settings.autoSyncMin && Date.now() - S.lastSyncTry > 60 * 1000) doSync();
+    navigator.serviceWorker?.getRegistration().then((r) => r?.update()).catch(() => {}); // 戻ってきたときにも更新を確かめる
   }
 });
 window.addEventListener('pagehide', () => { saveNow(); });
@@ -2342,7 +2434,12 @@ async function handleLaunchParams() {
 }
 
 async function start() {
+  const bootAt = Date.now();
   await loadSettings();
+  if (!S.settings.deviceName) {
+    S.settings.deviceName = defaultDeviceName();
+    saveSettings();
+  }
   await loadToday();
   S.proofIgnoreGlobal = new Set(await db.kvGet('proofIgnore', []));
   applyView();
@@ -2370,7 +2467,11 @@ async function start() {
     const hadController = !!navigator.serviceWorker.controller; // 初回の登録では再読み込みしない
     const reg = await navigator.serviceWorker.register('sw.js').catch(() => null);
     if (reg) {
-      const notify = (worker) => toast('新しいバージョンがあります', 0, ['更新', () => worker.postMessage('skipWaiting')]);
+      const notify = (worker) => {
+        // 起動した直後でまだ何も書いていなければ、確認せずに新しい版へ切り替える（古い版のまま使い続けないように）
+        if (Date.now() - bootAt < 20000 && S.saveCount === 0) { worker.postMessage('skipWaiting'); return; }
+        toast('新しいバージョンがあります', 0, ['更新', () => worker.postMessage('skipWaiting')]);
+      };
       if (reg.waiting && navigator.serviceWorker.controller) notify(reg.waiting);
       reg.addEventListener('updatefound', () => {
         const w = reg.installing;
