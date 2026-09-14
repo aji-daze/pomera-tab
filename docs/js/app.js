@@ -19,7 +19,7 @@ const DEFAULTS = {
   typewriter: false, wakeLock: true, focusStatus: true, autoSyncMin: 5, fileSort: 'name',
   proofCats: { ...Proof.DEFAULT_CATS }, proofDialogue: true, proofMaxLen: 120,
   memoFolder: 'Obsidian/ポメラ/メモ', driveName: 'OneDrive',
-  dvVertical: true, dvCols: 3, dvFont: 15,
+  dvVertical: true, dvCols: 0, dvFont: 15, // dvCols 0 = 段数を画面の大きさに合わせる
 };
 const OPEN_BRACKETS = '「『（(〈《【［〔“‘';
 const WEBFONTS = {
@@ -70,6 +70,7 @@ const dictView = createDictView({
   settings: () => S.settings,
   saveSettings: () => saveSettings(),
   insert: (text) => insertText(text),
+  menu: (title, items) => menu(title, items),
   exportVocab: (items) => exportVocab(items),
   onClose: () => { if (!S.panel) editor.focus({ preventScroll: true }); },
 });
@@ -111,7 +112,7 @@ function dialog(build) {
       done = true;
       dlg.close();
       resolve(value);
-      if (!S.panel) setTimeout(() => editor.focus(), 0);
+      if (!S.panel && !dictView.isOpen()) setTimeout(() => editor.focus(), 0);
     };
     dlg.replaceChildren();
     dlg.oncancel = (e) => { e.preventDefault(); close(null); };
@@ -1762,6 +1763,22 @@ const COMMANDS = {
   sectionDown: () => moveSection(null, 1),
   headingPrev: () => jumpHeading(-1),
   headingNext: () => jumpHeading(1),
+  // 幅の狭い画面で上のバーに入りきらないボタンを、ここにまとめる
+  more: async () => {
+    const narrow = window.innerWidth <= 700;
+    const v = await menu('メニュー', [
+      narrow && ['目次（アウトライン）', 'outline'],
+      narrow && ['検索・置換', 'find'],
+      narrow && [S.proof ? '校正モードを終わる' : '校正モード', 'proof'],
+      narrow && [isVertical() ? '横書きにする' : '縦書きにする', 'vertical'],
+      [S.preview ? '編集に戻る' : '表示（ルビ・縦中横の確認）', 'preview'],
+      [S.focus ? '集中モードを終わる' : '集中モード', 'focus'],
+      ['すぐメモ', 'memo'],
+      ['新しい原稿', 'newdoc'],
+      narrow && ['設定', 'settings'],
+    ]);
+    if (v && COMMANDS[v]) COMMANDS[v]();
+  },
   proof: () => {
     if (!S.proof) toggleProof(true);
     else if (S.panel !== 'proof') openProofPanel();

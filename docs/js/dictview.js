@@ -68,7 +68,8 @@ export function createDictView(app) {
         h('button', { class: 'opt', onclick: () => zoom(-1), title: '文字を小さく' }, 'A−'),
         h('button', { class: 'opt', onclick: () => zoom(1), title: '文字を大きく' }, 'A＋'),
         h('button', { class: 'opt', onclick: cycleCols, title: '段数を変える' }, '段数'),
-        els.dirBtn),
+        els.dirBtn,
+        h('button', { class: 'narrow-only', onclick: displayMenu, title: '紙面の表示' }, '⋯')),
       h('div', { class: 'dv-hashira' }, els.hashFirst, els.hashLast),
       h('div', { class: 'dv-body' }, els.page, els.tsume, els.msg, els.side),
       h('footer', { class: 'dv-foot' }, els.left, h('span', { class: 'dv-mid' }, els.pos, els.today), els.right),
@@ -89,7 +90,11 @@ export function createDictView(app) {
       const el = e.target.closest('.de');
       if (el) openCard(V.rows.get(+el.dataset.i));
     });
-    window.addEventListener('resize', () => { if (V.open && V.ready) { V.history = []; renderForward(V.start); } });
+    window.addEventListener('resize', () => {
+      if (!V.open) return;
+      applyStyle(); // 画面の向きや大きさが変わったら段数・ボタンの表記も合わせ直す
+      if (V.ready) { V.history = []; renderForward(V.start); }
+    });
     V.built = true;
   }
 
@@ -99,13 +104,29 @@ export function createDictView(app) {
     root.classList.toggle('vertical', v);
     root.classList.toggle('horizontal', !v);
     root.style.setProperty('--dv-fs', `${st.dvFont || 15}px`);
-    root.style.setProperty('--dv-cols', String(v ? (st.dvCols || 3) : Math.max(1, (st.dvCols || 3) - 1)));
+    root.style.setProperty('--dv-cols', String(columns()));
     els.dirBtn.textContent = v ? '横組み' : '縦組み';
-    const [l, r] = v ? [['‹ 次のページ', next], ['前のページ ›', prev]] : [['‹ 前のページ', prev], ['次のページ ›', next]];
+    const narrow = window.innerWidth < 560;
+    const [l, r] = v
+      ? [[narrow ? '‹ 次' : '‹ 次のページ', next], [narrow ? '前 ›' : '前のページ ›', prev]]
+      : [[narrow ? '‹ 前' : '‹ 前のページ', prev], [narrow ? '次 ›' : '次のページ ›', next]];
     els.left.textContent = l[0];
     els.left.onclick = l[1];
     els.right.textContent = r[0];
     els.right.onclick = r[1];
+  }
+
+  // 段数。「自動」（0）のときは紙面の大きさと文字の大きさから、1段に12字（横組みは22字）以上入る数にする
+  function columns() {
+    const st = app.settings();
+    const fs = st.dvFont || 15;
+    const gap = fs * 1.8;
+    if (st.dvCols) return vertical() ? st.dvCols : Math.max(1, st.dvCols - 1);
+    const r = els.page.getBoundingClientRect();
+    if (!r.width || !r.height) return vertical() ? 3 : 2;
+    return vertical()
+      ? Math.max(1, Math.min(4, Math.floor((r.height + gap) / (fs * 12 + gap))))
+      : Math.max(1, Math.min(3, Math.floor((r.width + gap) / (fs * 22 + gap))));
   }
 
   // ---- 開く・閉じる
@@ -521,11 +542,23 @@ export function createDictView(app) {
 
   function cycleCols() {
     const st = app.settings();
-    st.dvCols = (st.dvCols || 3) >= 4 ? 2 : (st.dvCols || 3) + 1;
+    st.dvCols = ((st.dvCols || 0) + 1) % 5; // 自動 → 1 → 2 → 3 → 4 → 自動
     app.saveSettings();
     applyStyle();
     if (V.ready) { V.history = []; renderForward(V.start); }
-    toast(`${vertical() ? st.dvCols : Math.max(1, st.dvCols - 1)}段にしました`, 1200);
+    toast(st.dvCols ? `${columns()}段にしました` : `段数は自動（いまは${columns()}段）`, 1500);
+  }
+
+  async function displayMenu() {
+    const st = app.settings();
+    const v = await app.menu('紙面の表示', [
+      [vertical() ? '横組みにする' : '縦組みにする', 'dir'],
+      [`段数を変える（いま ${st.dvCols ? `${columns()}段` : `自動・${columns()}段`}）`, 'cols'],
+      ['文字を大きく', 'bigger'],
+      ['文字を小さく', 'smaller'],
+      ['最近開いた言葉', 'history'],
+    ]);
+    ({ dir: toggleDir, cols: cycleCols, bigger: () => zoom(1), smaller: () => zoom(-1), history: showHistory })[v]?.();
   }
 
   // ---- キー操作（辞書を開いている間は、本文用のショートカットを止める）
