@@ -25,6 +25,7 @@ const DEFAULTS = {
   dvVertical: true, dvCols: 0, dvFont: 15, // dvCols 0 = 段数を画面の大きさに合わせる
   penName: '', pdfFormat: 'a4_40x30', pdfNombre: 'center', pdfChapterBreak: true, pdfRuby: true, pdfCover: true,
   readRate: 1, readVoice: '', qrBytes: 600, fullscreen: false,
+  readStyle: 'standard', readPitchAdjust: 0, readPauseScale: 1,
 };
 const OPEN_BRACKETS = '「『（(〈《【［〔“‘';
 const WEBFONTS = {
@@ -1703,16 +1704,46 @@ function recordMonths(log) {
 
 // ---- 読み上げ推敲
 
+function readOptions() {
+  const st = S.settings;
+  return {
+    rate: st.readRate || 1,
+    voiceURI: st.readVoice || '',
+    style: Speech.styleOf(st.readStyle),
+    pitchAdjust: st.readPitchAdjust || 0,
+    pauseScale: st.readPauseScale ?? 1,
+  };
+}
+
+function buildReadQueue(text, from, to) {
+  const style = Speech.styleOf(S.settings.readStyle);
+  return Speech.sentences(text, from, to, { splitComma: style.commaGap > 0, calm: style.calm });
+}
+
+// 読み上げ中に声の調子を変えたときは、区切り方も変わるので、いま読んでいる所から組み直す
+function rebuildReading() {
+  const R = reader.state;
+  if ($('#readBar').hidden || !R.queue.length) return;
+  const cur = R.queue[Math.min(R.index, R.queue.length - 1)];
+  const wasPlaying = R.playing;
+  const queue = buildReadQueue(editor.value, cur.start, S.readEnd ?? editor.value.length);
+  if (!queue.length) return;
+  reader.start(queue, readOptions());
+  if (!wasPlaying) reader.pause();
+}
+
 function startReading() {
   if (!Speech.supported()) { toast('この端末（ブラウザ）は読み上げに対応していません'); return; }
   const text = editor.value;
   const [a, b] = [editor.selectionStart, editor.selectionEnd];
   const from = a !== b ? a : text.lastIndexOf('\n', a - 1) + 1;
-  const queue = Speech.sentences(text, from, a !== b ? b : text.length);
+  S.readEnd = a !== b ? b : text.length;
+  const queue = buildReadQueue(text, from, S.readEnd);
   if (!queue.length) { toast('読み上げる文がありません'); return; }
+  S.readPreview = false;
   renderReadBar();
   $('#readBar').hidden = false;
-  reader.start(queue, { rate: S.settings.readRate || 1, voiceURI: S.settings.readVoice || '' });
+  reader.start(queue, readOptions());
   if (!Speech.japaneseVoices().length) {
     toast('日本語の音声が見つからないときは、端末の設定「テキスト読み上げ」で日本語を選んでください', 6000);
   }
@@ -1739,19 +1770,42 @@ function renderReadBar() {
   const voice = h('select', {
     class: 'read-voice', title: '声', hidden: voices.length < 2,
     onchange: () => { S.settings.readVoice = voice.value; saveSettings(); reader.setVoice(voice.value); },
-  }, voices.map((v) => h('option', { value: v.voiceURI, selected: v.voiceURI === S.settings.readVoice }, v.name)));
+  }, voiceOptions(voices));
+  const style = h('select', {
+    class: 'read-style', title: '声の調子',
+    onchange: () => { S.settings.readStyle = style.value; saveSettings(); rebuildReading(); },
+  }, Object.entries(Speech.VOICE_STYLES).map(([k, s]) => h('option', { value: k, selected: (S.settings.readStyle || 'standard') === k }, s.short)));
   bar.replaceChildren(
     h('button', { title: '前の文', onclick: () => reader.skip(-1) }, '⏮'),
     h('button', { class: 'read-play', title: '一時停止／再開', onclick: () => (reader.state.playing ? reader.pause() : reader.resume()) }, '⏸'),
     h('button', { title: '次の文', onclick: () => reader.skip(1) }, '⏭'),
     h('span', { class: 'read-count' }),
     h('span', { class: 'read-text' }),
+    style,
     rate,
     voice,
     h('button', { title: '読み上げを終わる（Esc）', onclick: stopReading }, '■ 終わる'));
 }
 
+function voiceOptions(voices) {
+  return [
+    h('option', { value: '', selected: !S.settings.readVoice }, '声：自動'),
+    ...voices.map((v) => h('option', { value: v.voiceURI, selected: v.voiceURI === S.settings.readVoice }, `${v.name}${v.localService ? '' : '（要ネット）'}`)),
+  ];
+}
+
+// ⚙ の「試しに聞く」: 見本の文を、いまの調子で読む（本文は動かさない）
+function previewVoice() {
+  if (!Speech.supported()) { toast('この端末（ブラウザ）は読み上げに対応していません'); return; }
+  if (!$('#readBar').hidden) stopReading();
+  const sample = '冷たい雨が、静かに窓を叩いていた。彼は、何も言わずに頷いた。';
+  S.readPreview = true;
+  reader.start(buildReadQueue(sample, 0, sample.length), readOptions());
+  if (!Speech.japaneseVoices().length) toast('日本語の音声が見つかりません。端末の設定「テキスト読み上げ」で日本語を入れてください', 5000);
+}
+
 function showReadSentence(item, i, n) {
+  if (S.readPreview) return;
   const bar = $('#readBar');
   const count = bar.querySelector('.read-count');
   if (!count) return;
@@ -1766,7 +1820,7 @@ function showReadSentence(item, i, n) {
 function readStateChanged(state) {
   const play = $('#readBar .read-play');
   if (play) play.textContent = state === 'play' ? '⏸' : '▶';
-  if (state === 'end') toast('最後まで読み上げました', 2000);
+  if (state === 'end' && !S.readPreview) toast('最後まで読み上げました', 2000);
 }
 
 if (Speech.supported()) {
@@ -1774,7 +1828,7 @@ if (Speech.supported()) {
     const select = $('#readBar .read-voice');
     if (!select || $('#readBar').hidden) return;
     const voices = Speech.japaneseVoices();
-    select.replaceChildren(...voices.map((v) => h('option', { value: v.voiceURI, selected: v.voiceURI === S.settings.readVoice }, v.name)));
+    select.replaceChildren(...voiceOptions(voices));
     select.hidden = voices.length < 2;
   });
 }
@@ -1957,6 +2011,16 @@ async function openSettings(section) {
         onchange: (e) => { st.memoFolder = T.safeFolder(e.target.value) || 'メモ'; e.target.value = st.memoFolder; saveSettings(); },
       })),
       field('原稿用紙換算', select('genkoCols', [[20, '20字'], [40, '40字']]), '×', select('genkoRows', [[20, '20行'], [30, '30行'], [40, '40行']]))),
+    h('fieldset', { class: 'set', id: 'set-read' }, h('legend', {}, '読み上げ推敲（Alt+Y）'),
+      h('p', { class: 'hint' }, '端末の音声合成で変えられるのは、声の種類・高さ・速さと、文や読点のあとの「間」です。その組み合わせで声の調子を作ります（声質そのものは端末の声によります）。'),
+      field('声の調子', select('readStyle', Object.entries(Speech.VOICE_STYLES).map(([k, s]) => [k, s.label]))),
+      field('声', h('select', { onchange: (e) => { st.readVoice = e.target.value; saveSettings(); } }, voiceOptions(Speech.japaneseVoices()))),
+      field('高さの微調整', ...range('readPitchAdjust', -0.3, 0.3, 0.05)),
+      field('間の長さ', ...range('readPauseScale', 0, 2, 0.1, '倍')),
+      h('div', { class: 'row' }, h('button', { onclick: previewVoice }, '試しに聞く'), h('button', { onclick: () => reader.stop() }, '止める')),
+      h('p', { class: 'hint' }, Speech.japaneseVoices().length
+        ? `この端末には日本語の声が${Speech.japaneseVoices().length}種類あります。「静かな低音」は男性の声があれば自動で選びます。`
+        : '日本語の声が見つかりません。端末の設定「テキスト読み上げ」で、日本語の音声データを入れてください。')),
     h('fieldset', { class: 'set', id: 'set-sync' }, h('legend', {}, '同期（GitHub 経由で PC の Obsidian へ）'),
       h('p', { class: 'hint' }, '原稿用の非公開リポジトリと、そのリポジトリだけに書き込めるトークンを入れます。手順はセットアップ手順書を見てください。トークンはこの端末の中にだけ保存されます。'),
       syncInput('owner', 'ユーザー名', { placeholder: '例：aji-daze' }),
