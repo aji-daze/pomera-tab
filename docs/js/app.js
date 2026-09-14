@@ -24,7 +24,7 @@ const DEFAULTS = {
   memoFolder: 'Obsidian/ポメラ/メモ', driveName: 'OneDrive',
   dvVertical: true, dvCols: 0, dvFont: 15, // dvCols 0 = 段数を画面の大きさに合わせる
   penName: '', pdfFormat: 'a4_40x30', pdfNombre: 'center', pdfChapterBreak: true, pdfRuby: true, pdfCover: true,
-  readRate: 1, readVoice: '', qrBytes: 600,
+  readRate: 1, readVoice: '', qrBytes: 600, fullscreen: false,
 };
 const OPEN_BRACKETS = '「『（(〈《【［〔“‘';
 const WEBFONTS = {
@@ -291,6 +291,8 @@ function applyView() {
   b.toggle('focus-status', S.focus && st.focusStatus);
   $('#btnVertical').textContent = isVertical() ? '横' : '縦';
   $('#btnPreview').textContent = S.preview ? '編集' : '表示';
+  const themeColor = document.querySelector('meta[name="theme-color"]'); // ステータスバーの色を配色に合わせる
+  if (themeColor) themeColor.content = getComputedStyle(root).getPropertyValue('--bg').trim() || '#fbf9f3';
   if (WEBFONTS[st.font] && !document.getElementById(`wf-${st.font}`)) {
     document.head.append(h('link', { id: `wf-${st.font}`, rel: 'stylesheet', href: WEBFONTS[st.font] }));
   }
@@ -1926,6 +1928,9 @@ async function openSettings(section) {
       field('1行の文字数', select('cols', [[0, '画面いっぱい'], [20, '20字'], [30, '30字'], [40, '40字'], [50, '50字']])),
       check('vertical', '新しく開く原稿を縦書きにする'),
       check('typewriter', 'タイプライター表示（入力中の行を画面の中ほどに保つ）'),
+      h('label', { class: 'field check' },
+        h('input', { type: 'checkbox', checked: !!st.fullscreen, onchange: (e) => setFullscreen(e.target.checked) }),
+        '全面表示で使う（ステータスバーを隠す。起動後は、最初に画面を触ったときに切り替わります）'),
       check('focusStatus', '集中モードでも文字数などを薄く表示する'),
       check('wakeLock', '書いている間は画面を消さない（5分操作がなければ解除）')),
     h('fieldset', { class: 'set' }, h('legend', {}, '執筆'),
@@ -2044,8 +2049,37 @@ function toggleFocus(force) {
   applyView();
   if (S.focus && !document.fullscreenElement && document.documentElement.requestFullscreen) {
     document.documentElement.requestFullscreen({ navigationUI: 'hide' }).catch(() => {});
+  } else if (!S.focus && !S.settings.fullscreen && document.fullscreenElement) {
+    document.exitFullscreen().catch(() => {}); // 全面表示を使わない設定なら、集中モードを終えたときに戻す
   }
   toast(S.focus ? '集中モード（Alt+Z で戻る／画面の上端をタップでメニュー）' : '集中モードを終了', 1800);
+}
+
+// 全面表示（ステータスバーを隠す）の切り替え。ブラウザの決まりで、利用者の操作があったときにしか全面表示にできない
+async function setFullscreen(on) {
+  S.settings.fullscreen = on;
+  saveSettings();
+  try {
+    if (on && !document.fullscreenElement) await document.documentElement.requestFullscreen({ navigationUI: 'hide' });
+    if (!on && document.fullscreenElement) await document.exitFullscreen();
+  } catch {
+    toast(on ? 'いまは全面表示にできませんでした。画面を触ったときに切り替えます' : '全面表示を解除できませんでした', 3000);
+    if (on) armFullscreenOnGesture();
+  }
+}
+
+// 起動したとき・アプリに戻ったときは、最初に画面を触ったタイミングで全面表示に戻す
+function armFullscreenOnGesture() {
+  if (!S.settings.fullscreen || document.fullscreenElement || !document.documentElement.requestFullscreen) return;
+  const go = () => {
+    window.removeEventListener('pointerdown', go, true);
+    window.removeEventListener('keydown', go, true);
+    if (S.settings.fullscreen && !document.fullscreenElement) {
+      document.documentElement.requestFullscreen({ navigationUI: 'hide' }).catch(() => {});
+    }
+  };
+  window.addEventListener('pointerdown', go, true);
+  window.addEventListener('keydown', go, true);
 }
 
 let revealTimer = 0;
@@ -2195,6 +2229,7 @@ document.addEventListener('visibilitychange', async () => {
     keepAwake();
     if (S.settings.autoSyncMin && Date.now() - S.lastSyncTry > 60 * 1000) doSync();
     navigator.serviceWorker?.getRegistration().then((r) => r?.update()).catch(() => {}); // 戻ってきたときにも更新を確かめる
+    armFullscreenOnGesture();
   }
 });
 window.addEventListener('pagehide', () => { saveNow(); });
@@ -2294,6 +2329,7 @@ const COMMANDS = {
   },
   preview: () => togglePreview(),
   focus: () => toggleFocus(),
+  fullscreen: () => setFullscreen(!document.fullscreenElement),
   sync: () => doSync({ manual: true }),
   settings: () => togglePanel('settings', () => openSettings()),
   help: () => openSettings('help'),
@@ -2317,6 +2353,7 @@ const COMMANDS = {
       narrow && [isVertical() ? '横書きにする' : '縦書きにする', 'vertical'],
       mid && [S.preview ? '編集に戻る' : '表示（ルビ・縦中横の確認）', 'preview'],
       mid && [S.focus ? '集中モードを終わる' : '集中モード', 'focus'],
+      [document.fullscreenElement ? '全面表示をやめる（ステータスバーを出す）' : '全面表示（ステータスバーを隠す）', 'fullscreen'],
       [$('#readBar').hidden ? '読み上げ推敲' : '読み上げを終わる', 'read'],
       ['QRコードで渡す', 'qr'],
       ['PDF（応募原稿）を作る', 'pdf'],
@@ -2462,6 +2499,7 @@ async function start() {
     doSync();
   }
   keepAwake();
+  armFullscreenOnGesture();
 
   if ('serviceWorker' in navigator) {
     const hadController = !!navigator.serviceWorker.controller; // 初回の登録では再読み込みしない

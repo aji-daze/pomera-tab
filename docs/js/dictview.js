@@ -60,8 +60,8 @@ export function createDictView(app) {
       h('header', { class: 'dv-bar' },
         h('button', { onclick: close, title: '閉じる（Esc）' }, '← 戻る'),
         els.search,
-        h('button', { onclick: showToday, title: '今日の言葉（T）' }, '今日の言葉'),
-        h('button', { onclick: randomPage, title: 'パッと開く（R）' }, 'パッと開く'),
+        (els.todayBtn = h('button', { onclick: showToday, title: '今日の言葉（T）' }, '今日の言葉')),
+        (els.randomBtn = h('button', { onclick: randomPage, title: 'パッと開く（R）' }, 'パッと開く')),
         h('button', { onclick: () => showVocab(), title: '単語帳（B）' }, '単語帳'),
         h('button', { class: 'opt', onclick: showHistory }, '履歴'),
         h('span', { class: 'spacer' }),
@@ -107,6 +107,8 @@ export function createDictView(app) {
     root.style.setProperty('--dv-cols', String(columns()));
     els.dirBtn.textContent = v ? '横組み' : '縦組み';
     const narrow = window.innerWidth < 560;
+    els.todayBtn.textContent = narrow ? '今日' : '今日の言葉'; // スマホの縦でも1行に収める
+    els.randomBtn.textContent = narrow ? 'パッと' : 'パッと開く';
     const [l, r] = v
       ? [[narrow ? '‹ 次' : '‹ 次のページ', next], [narrow ? '前 ›' : '前のページ ›', prev]]
       : [[narrow ? '‹ 前' : '‹ 前のページ', prev], [narrow ? '次 ›' : '次のページ ›', next]];
