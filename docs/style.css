@@ -17,7 +17,7 @@
 [data-font="bizud"]    { --font: "BIZ UDPGothic", "Noto Sans JP", "Noto Sans CJK JP", sans-serif; }
 
 * { box-sizing: border-box; }
-html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); }
+html, body { margin: 0; height: 100%; max-width: 100%; overflow: hidden; background: var(--bg); color: var(--fg); }
 body {
   font-family: system-ui, "Noto Sans JP", "Noto Sans CJK JP", sans-serif;
   font-size: 15px;
@@ -43,7 +43,8 @@ input[type="text"], input[type="search"], input[type="password"], input[type="nu
 }
 :focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 
-.app { display: flex; flex-direction: column; height: 100dvh; position: relative; }
+/* はみ出した要素があってもページ全体が広がらないようにする（スマホで画面が縮小表示にならないため） */
+.app { display: flex; flex-direction: column; width: 100%; height: 100dvh; position: relative; overflow: hidden; }
 
 /* ---- 上部バー ---- */
 .topbar {
@@ -52,8 +53,9 @@ input[type="text"], input[type="search"], input[type="password"], input[type="nu
   border-bottom: 1px solid var(--line); background: var(--bg);
   transition: transform .18s ease, box-shadow .18s ease; z-index: 8;
 }
-.topbar button { border-color: transparent; padding: 6px 10px; }
-.topbar .doc-title { max-width: 40vw; overflow: hidden; text-overflow: ellipsis; font-weight: 600; }
+.topbar button { flex: none; border-color: transparent; padding: 6px 10px; }
+.topbar .doc-title { flex: 0 1 auto; min-width: 2em; max-width: 40vw; overflow: hidden; text-overflow: ellipsis; font-weight: 600; }
+.topbar { overflow: hidden; }
 .topbar .doc-title small { color: var(--muted); font-weight: 400; margin-right: 6px; }
 #btnSync.pending::after { content: "●"; color: var(--accent); font-size: 9px; margin-left: 3px; vertical-align: super; }
 #btnSync.error { color: #c2412d; }
@@ -370,6 +372,7 @@ dialog.qr-dialog { width: min(520px, 96vw); }
 .chart-tip { position: absolute; transform: translate(-50%, -100%); pointer-events: none; z-index: 2; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 5px 9px; box-shadow: 0 6px 16px rgba(0,0,0,.15); white-space: nowrap; font-size: 12px; }
 .chart-tip strong { display: block; font-size: 14px; color: var(--fg); }
 .chart-tip span { color: var(--muted); }
+.chart-tip .tip-devices { display: block; }
 .chart-empty { position: absolute; left: 50px; right: 0; top: 60px; text-align: center; }
 .rec-details { margin: 10px 0; }
 .rec-details summary { cursor: pointer; color: var(--accent); }
