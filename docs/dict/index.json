@@ -1,5 +1,5 @@
 {
-  "version": "2026-09-11",
+  "version": "2026-09-14",
   "entries": 177520,
   "shards": [
     {
@@ -39,5 +39,10 @@
       "license": "Japanese WordNet License（NICT）",
       "url": "https://bond-lab.github.io/wnja/"
     }
-  ]
+  ],
+  "browse": {
+    "file": "browse.json.gz",
+    "bytes": 3668652,
+    "entries": 93473
+  }
 }
