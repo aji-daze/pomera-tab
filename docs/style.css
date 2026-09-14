@@ -133,6 +133,30 @@ body.vertical .proof-layer mark { text-underline-position: right; }
 #stSave.dirty { color: var(--accent); }
 @media (max-width: 700px) { #stToday, #stBattery { display: none; } .statusbar { gap: 10px; } }
 
+/* ---- 画面の幅に合わせる（小さいタブレット・スマホ） ---- */
+.topbar .more-btn { display: none; }
+@media (max-width: 980px) {
+  .topbar .hide-md { display: none; }
+  .topbar .more-btn { display: inline-block; }
+}
+@media (max-width: 700px) {
+  .topbar .hide-sm, .topbar .spacer { display: none; }
+  .topbar button { padding: 6px 9px; }
+  .topbar .doc-title { flex: 1 1 auto; min-width: 0; max-width: none; text-align: left; }
+  #stClock, #stSave, #stGoal:empty, #stSync:empty { display: none; }
+  .statusbar { gap: 10px; font-size: 12px; padding: 0 max(10px, env(safe-area-inset-right)) 0 max(10px, env(safe-area-inset-left)); }
+  #editor { padding: 16px max(14px, env(safe-area-inset-right)) 16px max(14px, env(safe-area-inset-left)); }
+  body.fixed-cols:not(.vertical) #editor { max-width: calc(var(--cols) * var(--fs) + 30px); }
+  body.vertical.fixed-cols #editor { max-height: calc(var(--cols) * var(--fs) + 34px); }
+}
+@media (max-width: 560px) {
+  .panel, .panel.left { left: 0; right: 0; width: 100%; border-left: 0; border-right: 0; box-shadow: none; }
+  .field { grid-template-columns: 1fr; gap: 4px; }
+  .field.check { grid-template-columns: auto 1fr; }
+  .panel-tools button { padding: 6px 10px; }
+  dialog { padding: 14px; }
+}
+
 /* ---- 集中モード ---- */
 #reveal { display: none; position: absolute; top: 0; left: 0; right: 0; height: 22px; z-index: 7; }
 body.focus #reveal { display: block; }
@@ -274,7 +298,32 @@ pre.snap { white-space: pre-wrap; font-family: var(--font); font-size: 14px; max
 .dv-quiz-a p { font-size: 16px; line-height: 1.7; }
 .dv-quiz-reveal { margin: 14px auto 6px; }
 .dv-quiz-after { justify-content: center; }
-@media (max-width: 760px) { .dv-bar .opt { display: none; } .dv-tsume button { width: 28px; } }
+.dv-bar .narrow-only { display: none; }
+@media (max-width: 760px) {
+  .dv-bar .opt { display: none; }
+  .dv-bar .narrow-only { display: inline-block; }
+  .dv-tsume button { width: 28px; }
+}
+@media (max-width: 560px) {
+  .dv-bar { flex-wrap: wrap; overflow-x: visible; row-gap: 4px; padding-top: 4px; padding-bottom: 4px; }
+  .dv-bar button { padding: 6px 8px; }
+  .dv-search { order: 10; flex: 1 1 100%; max-width: none; min-width: 0; margin: 0; }
+  .dv-hashira { margin: 0 12px 0 36px; font-size: 12px; height: 30px; padding-top: 6px; }
+  .dv.horizontal .dv-hashira { margin: 0 36px 0 12px; }
+  .dv-page { top: 8px; bottom: 6px; left: 34px; right: 10px; }
+  .dv.horizontal .dv-page { left: 10px; right: 34px; }
+  .dv-tsume { width: 30px; }
+  .dv-tsume button { width: 28px; font-size: 13px; }
+  .dv-foot { padding: 2px 4px 6px; gap: 4px; }
+  .dv-foot button { padding: 6px 8px; }
+  .dv-mid { gap: 8px; font-size: 11.5px; }
+  .dv-side { width: 100%; border-left: 0; }
+  .dv-card-wrap { padding: 8px; }
+  .dv-card { padding: 14px; }
+  .dv-card-y { font-size: 20px; }
+  .dv-card-h { font-size: 17px; }
+  .dv-quiz-q { font-size: 28px; }
+}
 
 /* ---- ダイアログ・通知 ---- */
 dialog {

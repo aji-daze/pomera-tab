@@ -1,6 +1,6 @@
 // オフラインで起動できるよう、アプリ本体を端末に保存しておく。
 // アプリを更新したら VERSION を上げる（端末側に「更新があります」と表示される）。
-const VERSION = '1.3.0';
+const VERSION = '1.4.0';
 const CACHE = `pomera-tab-${VERSION}`;
 const FONT_CACHE = 'pomera-tab-fonts';
 const SHELL = [
