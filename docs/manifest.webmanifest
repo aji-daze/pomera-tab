@@ -1,6 +1,6 @@
 {
-  "name": "ポメラタブ",
-  "short_name": "ポメラタブ",
+  "name": "pomnote",
+  "short_name": "pomnote",
   "description": "オフラインで使える、書くことだけの執筆アプリ",
   "lang": "ja",
   "start_url": "./",
@@ -16,6 +16,18 @@
   ],
   "shortcuts": [
     { "name": "すぐメモ", "short_name": "メモ", "url": "./?new=memo" }
+  ],
+  "file_handlers": [
+    {
+      "action": "./",
+      "accept": {
+        "application/epub+zip": [".epub"],
+        "text/markdown": [".md"],
+        "text/plain": [".txt"],
+        "text/html": [".html", ".htm"],
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document": [".docx"]
+      }
+    }
   ],
   "share_target": {
     "action": "./",

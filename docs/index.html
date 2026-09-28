@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
 <meta name="theme-color" content="#23211c">
-<title>ポメラタブ</title>
+<title>pomnote</title>
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icons/icon-192.png">
 <link rel="stylesheet" href="style.css">
@@ -21,6 +21,7 @@
     <button data-cmd="proof" id="btnProof" class="hide-sm" title="校正モード（F7）">校正</button>
     <button data-cmd="vertical" id="btnVertical" class="hide-sm" title="縦書き／横書き（Alt+V）">縦</button>
     <button data-cmd="preview" id="btnPreview" class="hide-md" title="ルビ・縦中横の確認（Alt+P）">表示</button>
+    <button data-cmd="book" class="hide-md" title="読書・本棚（Alt+U）">読書</button>
     <button data-cmd="focus" class="hide-md" title="集中モード（Alt+Z）">集中</button>
     <button data-cmd="sync" id="btnSync" title="保存して同期（Ctrl+S）">同期</button>
     <button data-cmd="settings" class="hide-sm" title="設定（Alt+,）">⚙</button>
@@ -30,7 +31,7 @@
   <main class="stage" id="stage">
     <div id="proofLayer" class="proof-layer" aria-hidden="true" hidden></div>
     <textarea id="editor" spellcheck="false" autocapitalize="off" autocomplete="off" autocorrect="off" aria-label="本文"></textarea>
-    <div id="preview" class="preview" tabindex="0" hidden></div>
+    <div id="preview" class="preview md" tabindex="0" hidden></div>
   </main>
   <div id="readBar" class="read-bar" hidden></div>
   <footer class="statusbar" id="statusbar">
@@ -47,6 +48,7 @@
     <span id="stClock"></span>
   </footer>
   <aside id="panel" class="panel" hidden></aside>
+  <section id="bookView" class="bk" hidden></section>
   <section id="dictView" class="dv" hidden></section>
 </div>
 <dialog id="dialog"></dialog>

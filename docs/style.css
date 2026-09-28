@@ -439,3 +439,68 @@ dialog .menu button { text-align: left; }
   box-shadow: 0 8px 24px rgba(0,0,0,.2); font-size: 14px;
 }
 .toast button { color: var(--bg); border-color: color-mix(in srgb, var(--bg) 40%, transparent); min-height: 30px; }
+
+/* ---------------------------------------------------------------- Markdown の表示（編集画面の「表示」と読書画面） */
+.md p { margin: 0; }
+.md p.blank::before { content: "\200b"; }
+.md h1, .md h2, .md h3, .md h4, .md h5, .md h6 { margin-block: .8em .4em; line-height: 1.5; break-after: avoid; }
+.md h1 { font-size: 1.35em; }
+.md h2 { font-size: 1.2em; }
+.md h3 { font-size: 1.1em; }
+.md h4, .md h5, .md h6 { font-size: 1em; }
+.md ul, .md ol { margin-block: .2em; margin-inline: 0; padding-inline-start: 1.6em; }
+.md li { margin: 0; }
+.md blockquote { margin-block: .4em; margin-inline: 0; padding-inline-start: .9em; border-inline-start: 3px solid var(--line); }
+.md blockquote.callout { background: color-mix(in srgb, var(--accent) 7%, transparent); border-color: var(--accent); padding: .3em .8em; border-radius: 4px; }
+.md .callout-title { font-weight: 700; }
+.md pre { white-space: pre-wrap; overflow-wrap: anywhere; font-family: ui-monospace, "BIZ UDGothic", monospace; font-size: .82em; line-height: 1.6; background: var(--panel); padding: .5em .7em; border-radius: 6px; margin-block: .4em; }
+.md code { font-family: ui-monospace, "BIZ UDGothic", monospace; font-size: .88em; background: var(--panel); border-radius: 3px; padding: 0 .2em; }
+.md pre code { background: none; padding: 0; font-size: inherit; }
+.md hr { border: 0; border-block-start: 1px solid var(--line); margin-block: .8em; }
+.md .table { overflow: auto; max-width: 100%; }
+.md table { border-collapse: collapse; font-size: .9em; }
+.md th, .md td { border: 1px solid var(--line); padding: .15em .5em; vertical-align: top; }
+.md th { background: var(--panel); }
+.md a, .md .wikilink { color: var(--accent); }
+.md mark { background: var(--sel); color: inherit; }
+.md .bk-noimg, .md .fn { color: var(--muted); }
+.md .task.done { color: var(--accent); }
+.md img { display: block; max-width: var(--img-w, 100%); max-height: var(--img-h, 70vh); margin: .4em auto; object-fit: contain; break-inside: avoid; }
+.md img.gaiji { display: inline; height: 1em; width: auto; margin: 0; vertical-align: -.1em; }
+.md rt { font-size: .5em; }
+.md .tcy { text-combine-upright: all; }
+.md .bouten { font-style: normal; text-emphasis: filled sesame; }
+.md .bosen { text-decoration: underline; }
+body.vertical .preview.md em:not(.bouten) { font-style: normal; text-emphasis: filled sesame; }
+
+/* ---------------------------------------------------------------- 読書（本棚・ページをめくって読む） */
+.bk { position: absolute; inset: 0; z-index: 19; padding-top: var(--sat); padding-bottom: var(--sab); display: grid; grid-template-rows: auto minmax(0, 1fr) auto; grid-template-columns: minmax(0, 1fr); background: var(--bg); color: var(--fg); outline: none; }
+.bk-bar { display: flex; align-items: center; gap: 2px; padding: 6px max(10px, env(safe-area-inset-right)) 6px max(10px, env(safe-area-inset-left)); border-bottom: 1px solid var(--line); overflow-x: auto; }
+.bk-bar button { border-color: transparent; white-space: nowrap; flex: none; }
+.bk-bar button.primary { border-color: var(--accent); }
+.bk-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--font); font-weight: 700; padding: 0 8px; }
+.bk-stage { position: relative; overflow: hidden; min-height: 0; min-width: 0; touch-action: pinch-zoom; }
+.bk-flow { position: absolute; column-fill: auto; font-family: var(--font); overflow-wrap: anywhere; line-break: strict; hanging-punctuation: allow-end; text-align: justify; }
+.bk.vertical .bk-flow { writing-mode: vertical-rl; }
+.bk.vertical .bk-flow em:not(.bouten) { font-style: normal; text-emphasis: filled sesame; }
+.bk-flow .bk-end { block-size: 0; }
+.bk-flow .bk-titlepage { text-align: center; padding-block-start: 2em; }
+.bk-flow .bk-titlepage h1 { font-size: 1.6em; margin-block: 1em; }
+.bk-flow .bk-titlepage .author { text-align: end; margin-block-start: 1.5em; }
+.bk-flow .colophon { font-size: .8em; color: var(--muted); }
+.bk-foot { display: flex; align-items: center; gap: 10px; padding: 4px max(12px, env(safe-area-inset-right)) 6px max(12px, env(safe-area-inset-left)); font-size: 12px; color: var(--muted); min-height: 28px; }
+.bk-foot .bk-chap { flex: 0 1 auto; max-width: 40%; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bk-foot input[type=range] { flex: 1; min-width: 60px; min-height: 0; padding: 0; border: 0; accent-color: var(--accent); }
+.bk.vertical .bk-foot input[type=range] { direction: rtl; }
+.bk-foot .bk-pos { margin-left: auto; white-space: nowrap; }
+.bk.immersive .bk-bar { display: none; }
+.bk.immersive .bk-foot input { visibility: hidden; }
+.bk.library { grid-template-rows: auto minmax(0, 1fr); }
+.bk-lib { overflow: auto; width: 100%; max-width: 760px; margin: 0 auto; box-sizing: border-box; padding: 12px max(16px, env(safe-area-inset-right)) 24px max(16px, env(safe-area-inset-left)); }
+.bk-lib h3 { font-size: 14px; color: var(--muted); margin: 16px 0 6px; }
+.bk-book { display: flex; align-items: stretch; gap: 6px; border-bottom: 1px solid var(--line); }
+.bk-book .bk-open { flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: flex-start; gap: 2px; text-align: left; border: 0; padding: 10px 6px; border-radius: 6px; }
+.bk-book .bk-open:hover { background: color-mix(in srgb, var(--fg) 6%, transparent); }
+.bk-book .t { font-family: var(--font); font-weight: 700; font-size: 16px; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bk-book .m { font-size: 12px; color: var(--muted); }
+.bk-book .bk-del { align-self: center; border-color: transparent; color: var(--muted); font-size: 13px; }
