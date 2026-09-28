@@ -1,6 +1,6 @@
 // IndexedDB の薄いラッパー。原稿・設定・辞書はすべて端末内に保存する。
 const DB_NAME = 'pomera-tab';
-const DB_VER = 2;
+const DB_VER = 3;
 let dbp = null;
 
 export function openDB() {
@@ -22,6 +22,7 @@ export function openDB() {
         browse.createIndex('b', 'b'); // 並べ替え用の読み（清音・直音にそろえたもの）
         browse.createIndex('k', 'k'); // 辞書のキー
       }
+      mk('books', { keyPath: 'id' }); // 読書: 取り込んだ本（章ごとの HTML と画像）
     };
     req.onsuccess = () => resolve(req.result);
     req.onerror = () => reject(req.error);

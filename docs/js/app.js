@@ -1,4 +1,4 @@
-// ポメラタブ本体: 編集・ファイル管理・アウトライン・辞書・検索・設定・同期の画面
+// pomnote（ポメラタブ）本体: 編集・ファイル管理・アウトライン・辞書・検索・設定・同期の画面
 import * as db from './db.js';
 import * as T from './text.js';
 import * as Sync from './sync.js';
@@ -9,6 +9,8 @@ import * as QR from './qr.js';
 import * as Print from './print.js';
 import * as Speech from './speech.js';
 import * as LocalFS from './localfs.js';
+import * as F from './formats.js';
+import { createBookView } from './bookview.js';
 
 const VERSION = '1.0.0';
 const $ = (s, root = document) => root.querySelector(s);
@@ -27,6 +29,7 @@ const DEFAULTS = {
   penName: '', pdfFormat: 'a4_40x30', pdfNombre: 'center', pdfChapterBreak: true, pdfRuby: true, pdfCover: true,
   readRate: 1, readVoice: '', qrBytes: 600, fullscreen: false,
   readStyle: 'standard', readPitchAdjust: 0, readPauseScale: 1,
+  bkFont: 18, bkLh: 1.9, // 読書画面の文字の大きさ・行間
 };
 const OPEN_BRACKETS = '「『（(〈《【［〔“‘';
 const WEBFONTS = {
@@ -80,6 +83,25 @@ const dictView = createDictView({
   insert: (text) => insertText(text),
   menu: (title, items) => menu(title, items),
   exportVocab: (items) => exportVocab(items),
+  onClose: () => {
+    if (bookView.isOpen()) bookView.focus();
+    else if (!S.panel) editor.focus({ preventScroll: true });
+  },
+});
+
+const bookView = createBookView({
+  h,
+  toast,
+  menu: (title, items) => menu(title, items),
+  confirmBox: (message, ok, danger) => confirmBox(message, ok, danger),
+  settings: () => S.settings,
+  saveSettings: () => saveSettings(),
+  lookup: (q) => dictView.open(q || undefined),
+  currentDoc: async () => {
+    if (!S.doc) return null;
+    await saveNow();
+    return { id: S.doc.id, name: S.doc.name, ext: S.doc.ext, text: editor.value, vertical: isVertical() };
+  },
   onClose: () => { if (!S.panel) editor.focus({ preventScroll: true }); },
 });
 
@@ -125,7 +147,8 @@ function dialog(build) {
       done = true;
       dlg.close();
       resolve(value);
-      if (!S.panel && !dictView.isOpen()) setTimeout(() => editor.focus(), 0);
+      if (bookView.isOpen()) setTimeout(() => bookView.focus(), 0);
+      else if (!S.panel && !dictView.isOpen()) setTimeout(() => editor.focus(), 0);
     };
     dlg.replaceChildren();
     dlg.className = '';
@@ -311,7 +334,7 @@ function updateTitle() {
   if (!S.doc) return;
   if (S.doc.folder) t.append(h('small', {}, S.doc.folder));
   t.append(S.doc.name + (S.doc.ext === '.txt' ? '.txt' : ''));
-  document.title = `${S.doc.name} - ポメラタブ`;
+  document.title = `${S.doc.name} - pomnote`;
 }
 
 // ---------------------------------------------------------------- 文字数・本日の執筆量
@@ -1515,7 +1538,7 @@ async function writeLogDoc() {
   const content = [
     `# 執筆記録（${name}）`,
     '',
-    'ポメラタブが自動で書き出す、この端末の執筆記録です。同期のたびに上書きされるので、ここは編集しないでください。',
+    'pomnote が自動で書き出す、この端末の執筆記録です。同期のたびに上書きされるので、ここは編集しないでください。',
     '',
     '| 日付 | 書いた字数 | 増減 | 時間（分） |',
     '|---|---:|---:|---:|',
@@ -2008,6 +2031,7 @@ async function openSettings(section) {
     ['Alt+R', 'ルビ記法を挿入 ｜漢字《かんじ》'], ['Alt+B', '傍点記法を挿入 《《強調》》'], ['Alt+T', '日付と時刻を挿入'],
     ['F7 / Alt+K', '校正モード（誤字・表記ゆれに波線）'], ['F8 / Shift+F8', '次／前の指摘へ'],
     ['Alt+Y', '読み上げ推敲（選択部分、またはカーソルのある段落から）'], ['Alt+Q', 'QRコードで渡す'],
+    ['Alt+U', '読書（本棚）。読書中は ← → ・Space・PageDown でページをめくる、T 目次、B しおり、＋／− 文字の大きさ、Esc 閉じる'],
     ['Alt+E', 'PDF（応募原稿）を作る'], ['Alt+I ／ Alt+W', '作品の進捗／執筆記録'],
     ['Alt+H', '版の履歴'], ['Alt+G', '目標文字数'], ['Alt+＋ / Alt+−', '文字を大きく／小さく'], ['Alt+,', '設定'], ['Esc', 'パネルを閉じる'],
   ];
@@ -2122,14 +2146,14 @@ async function openSettings(section) {
           onclick: async () => {
             await saveNow();
             const blob = new Blob([JSON.stringify({ app: 'pomera-tab', version: VERSION, exported: new Date().toISOString(), docs: await db.getAll('docs') })], { type: 'application/json' });
-            downloadBlob(blob, `pomera-tab-backup-${T.compactStamp()}.json`);
+            downloadBlob(blob, `pomnote-backup-${T.compactStamp()}.json`);
           },
         }, '書き出す'),
         h('button', { onclick: () => importInput.click() }, '復元する'), importInput)),
     h('fieldset', { class: 'set', id: 'set-help' }, h('legend', {}, 'キー操作'),
       h('table', { class: 'keys' }, keys.map(([k, v]) => h('tr', {}, h('td', {}, h('kbd', {}, k)), h('td', {}, v)))),
       h('p', { class: 'hint' }, 'ルビは「｜漢字《かんじ》」、漢字だけなら「漢字《かんじ》」、傍点は「《《強調》》」。見出しは行頭の「# 」。'),
-      h('p', { class: 'hint' }, `ポメラタブ ${VERSION}`)));
+      h('p', { class: 'hint' }, `pomnote ${VERSION}`)));
 
   panel.append(panelHead('設定'), body);
   if (section) body.querySelector(`#set-${section}`)?.scrollIntoView();
@@ -2137,8 +2161,11 @@ async function openSettings(section) {
 
 // ---------------------------------------------------------------- プレビュー・集中モード
 
+// .md は Markdown として（見出し・箇条書き・表・引用・リンクなど）、.txt は小説の記法だけで表示する
 function renderPreview() {
-  preview.innerHTML = T.previewHTML(editor.value, isVertical());
+  const md = !/\.txt$/i.test(S.doc?.ext || '.md');
+  preview.innerHTML = md ? F.markdownHTML(editor.value) : T.previewHTML(editor.value, isVertical());
+  if (md && isVertical()) F.addTcy(preview);
 }
 
 function togglePreview(force) {
@@ -2353,6 +2380,22 @@ setInterval(() => {
   if (Date.now() - S.lastSyncTry >= min * 60 * 1000) doSync();
 }, 30 * 1000);
 
+// 読書: パソコンでは画面にファイルをドラッグして開ける。「ファイルを開くアプリ」に選ばれたときも本棚へ取り込んで開く
+window.addEventListener('dragover', (e) => { if (e.dataTransfer?.types?.includes('Files')) e.preventDefault(); });
+window.addEventListener('drop', (e) => {
+  const files = [...(e.dataTransfer?.files || [])];
+  if (!files.length) return;
+  e.preventDefault();
+  closePanel();
+  bookView.importFiles(files);
+});
+if ('launchQueue' in window) {
+  window.launchQueue.setConsumer(async (params) => {
+    const files = await Promise.all((params.files || []).map((fh) => fh.getFile()));
+    if (files.length) bookView.importFiles(files);
+  });
+}
+
 window.addEventListener('online', () => { if (!Sync.isFolderMode(S.sync)) doSync(); });
 window.addEventListener('offline', () => { if (!Sync.isFolderMode(S.sync)) setSyncState(Sync.isConfigured(S.sync) ? 'offline' : 'none'); });
 
@@ -2465,6 +2508,7 @@ const COMMANDS = {
   outline: () => togglePanel('outline', openOutline),
   dict: () => {
     if (dictView.isOpen()) { dictView.close(); return; }
+    if (bookView.isOpen()) { dictView.open(String(getSelection()).trim().slice(0, 30) || undefined); return; }
     if (document.activeElement === editor && editor.selectionStart !== editor.selectionEnd) togglePanel('dict', () => openDict());
     else { closePanel(); dictView.open(); }
   },
@@ -2507,6 +2551,8 @@ const COMMANDS = {
       mid && [S.focus ? '集中モードを終わる' : '集中モード', 'focus'],
       [document.fullscreenElement ? '全面表示をやめる（ステータスバーを出す）' : '全面表示（ステータスバーを隠す）', 'fullscreen'],
       [$('#readBar').hidden ? '読み上げ推敲' : '読み上げを終わる', 'read'],
+      ['読書（本棚・EPUB などを読む）', 'book'],
+      ['この原稿を本のように読む', 'readDoc'],
       ['QRコードで渡す', 'qr'],
       ['PDF（応募原稿）を作る', 'pdf'],
       ['作品の進捗', 'progress'],
@@ -2521,6 +2567,17 @@ const COMMANDS = {
     if (!S.proof) toggleProof(true);
     else if (S.panel !== 'proof') openProofPanel();
     else toggleProof(false);
+  },
+  book: () => {
+    if (bookView.isOpen()) { bookView.close(); return; }
+    closePanel();
+    if (!$('#readBar').hidden) stopReading();
+    bookView.open();
+  },
+  readDoc: () => {
+    closePanel();
+    if (!$('#readBar').hidden) stopReading();
+    bookView.openCurrent();
   },
   qr: () => openQr(),
   pdf: () => openPdfPanel(),
@@ -2540,7 +2597,7 @@ const KEYMAP = {
   'A-h': 'history', 'A-g': 'goal', 'A-t': 'date', 'A-r': 'ruby', 'A-b': 'bouten',
   'A-ArrowUp': 'sectionUp', 'A-ArrowDown': 'sectionDown', 'A-S-ArrowUp': 'headingPrev', 'A-S-ArrowDown': 'headingNext',
   'F7': 'proof', 'A-k': 'proof', 'F8': 'proofNext', 'S-F8': 'proofPrev',
-  'A-q': 'qr', 'A-e': 'pdf', 'A-i': 'progress', 'A-w': 'record', 'A-y': 'read',
+  'A-q': 'qr', 'A-e': 'pdf', 'A-i': 'progress', 'A-w': 'record', 'A-y': 'read', 'A-u': 'book',
   'A-=': 'bigger', 'A-S-=': 'bigger', 'A-;': 'bigger', 'A--': 'smaller',
 };
 const EDITOR_ONLY = new Set(['date', 'ruby', 'bouten', 'sectionUp', 'sectionDown', 'headingPrev', 'headingNext', 'findNext', 'findPrev']);
@@ -2549,6 +2606,7 @@ document.addEventListener('keydown', (e) => {
   if (e.isComposing || e.keyCode === 229) return;
   if ($('#dialog').open) return;
   if (dictView.isOpen() && !(e.altKey && e.code === 'KeyD') && dictView.handleKey(e)) return;
+  if (!dictView.isOpen() && bookView.isOpen() && !(e.altKey && e.code === 'KeyU') && bookView.handleKey(e)) return;
   let key = e.key;
   if (/^Key[A-Z]$/.test(e.code)) key = e.code.slice(3).toLowerCase();
   else if (/^Digit\d$/.test(e.code)) key = e.code.slice(5);
@@ -2560,6 +2618,7 @@ document.addEventListener('keydown', (e) => {
   const combo = `${e.ctrlKey || e.metaKey ? 'C-' : ''}${e.altKey ? 'A-' : ''}${e.shiftKey && key.length > 1 ? 'S-' : ''}${key}`;
   const cmd = KEYMAP[combo] || KEYMAP[combo.replace('S-', '')];
   if (cmd && COMMANDS[cmd]) {
+    if (bookView.isOpen() && !['book', 'dict', 'sync', 'help'].includes(cmd)) { e.preventDefault(); return; } // 読書中は裏の編集画面を動かさない
     if (EDITOR_ONLY.has(cmd) && e.target !== editor && !(cmd.startsWith('find') && S.panel === 'find')) return;
     if (cmd.startsWith('section') && S.panel === 'outline' && e.target !== editor) return; // パネル側で処理
     e.preventDefault();
@@ -2586,7 +2645,7 @@ $('#stChars').addEventListener('click', () => S.doc && setGoal(S.doc.id));
 
 // ---------------------------------------------------------------- 起動
 
-const WELCOME = `# ポメラタブへようこそ
+const WELCOME = `# pomnote へようこそ
 
 　ここはオフラインでも使える、書くことだけの画面です。入力した内容は一文字ごとに端末へ保存されます。
 
