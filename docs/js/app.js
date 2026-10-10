@@ -11,6 +11,7 @@ import * as Speech from './speech.js';
 import * as LocalFS from './localfs.js';
 import * as F from './formats.js';
 import { createBookView } from './bookview.js';
+import * as Notify from './notify.js';
 
 const VERSION = '1.0.0';
 const $ = (s, root = document) => root.querySelector(s);
@@ -30,6 +31,7 @@ const DEFAULTS = {
   readRate: 1, readVoice: '', qrBytes: 600, fullscreen: false,
   readStyle: 'standard', readPitchAdjust: 0, readPauseScale: 1,
   bkFont: 18, bkLh: 1.9, // 読書画面の文字の大きさ・行間
+  memoButton: false, // 通知欄に「すぐメモ」のボタンを出しておく
 };
 const OPEN_BRACKETS = '「『（(〈《【［〔“‘';
 const WEBFONTS = {
@@ -41,6 +43,7 @@ const S = {
   settings: { ...DEFAULTS },
   sync: { mode: 'github', owner: '', repo: '', branch: 'main', root: '', token: '', folderName: '', exclude: [] },
   installPrompt: null,
+  clips: [], // 通知欄に留めている原稿の id
   doc: null,
   savedContent: '',
   saveTimer: 0,
@@ -430,6 +433,7 @@ async function saveNow() {
     return d;
   });
   if (changed) {
+    if (S.clips.includes(doc.id)) Notify.showClip(doc); // 通知に留めてある原稿は、書いた内容を通知にも映す
     S.saveCount++;
     S.unsynced = true;
     setSyncState(S.syncState === 'running' ? 'running' : 'pending');
@@ -571,6 +575,7 @@ async function renameDialog(id) {
 
 async function trashDoc(id) {
   if (S.doc?.id === id) await saveNow();
+  if (S.clips.includes(id)) await setClip(id, false);
   const d = await db.get('docs', id);
   await Sync.leaveTomb(d);
   await db.update('docs', id, (x) => { x.trashed = Date.now(); x.baseSha = null; return x; });
@@ -636,6 +641,31 @@ function downloadBlob(blob, filename) {
   setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
 }
 
+// 通知欄に留める／外す（クリップ）
+async function setClip(id, on) {
+  if (on && !await Notify.ensurePermission()) {
+    toast('通知が許可されていません。端末の設定で、このアプリの通知を「許可」にしてください', 6000);
+    return false;
+  }
+  S.clips = on ? [...new Set([...S.clips, id])] : S.clips.filter((x) => x !== id);
+  await Notify.setClips(S.clips);
+  const d = await db.get('docs', id);
+  if (on && d) {
+    await Notify.showClip(d, { force: true });
+    toast(`「${d.name}」を通知欄に留めました`, 3000);
+  } else {
+    await Notify.hideClip(id);
+    if (d) toast(`「${d.name}」のクリップを外しました`, 2500);
+  }
+  if (S.panel === 'settings') openSettings();
+  return true;
+}
+
+async function toggleClip(id) {
+  if (!id) return;
+  await setClip(id, !S.clips.includes(id));
+}
+
 async function fileMenu(id) {
   const d = await db.get('docs', id);
   if (d.trashed) {
@@ -652,6 +682,7 @@ async function fileMenu(id) {
     ['複製', 'dup'],
     [`目標文字数${d.goal ? `（${fmt(d.goal)}字）` : ''}`, 'goal'],
     [vertical ? 'この原稿は横書きで開く' : 'この原稿は縦書きで開く', 'dir'],
+    Notify.supported() ? [S.clips.includes(id) ? '通知欄のクリップを外す' : '通知欄に留める（クリップ）', 'clip'] : null,
     ['版の履歴', 'history'],
     ['共有・書き出し', 'share'],
     ['PDF（応募原稿）にする', 'pdf'],
@@ -666,6 +697,7 @@ async function fileMenu(id) {
     await db.update('docs', id, (x) => { x.vertical = !vertical; return x; });
     if (S.doc?.id === id) { S.doc.vertical = !vertical; applyView(); }
   }
+  if (v === 'clip') { await toggleClip(id); renderFiles(); }
   if (v === 'history') await openHistory(id);
   if (v === 'share') await shareDoc(id);
   if (v === 'pdf') await openPdfPanel(id);
@@ -1909,6 +1941,7 @@ async function openHistory(id) {
 async function openSettings(section) {
   openPanel('settings');
   const st = S.settings;
+  S.clipDocs = Object.fromEntries(await Promise.all(S.clips.map(async (id) => [id, await db.get('docs', id)])));
   const save = () => { saveSettings(); applyView(); updateStats(); if (S.proof) runProof(); };
   const select = (key, options, onChange) => h('select', {
     onchange: (e) => { st[key] = isNaN(+e.target.value) || e.target.value === '' ? e.target.value : +e.target.value; save(); onChange?.(); },
@@ -2022,6 +2055,18 @@ async function openSettings(section) {
     },
   });
 
+  const permissionHint = () => {
+    const p = Notify.permission();
+    if (p === 'granted') return null;
+    if (p === 'denied') return h('p', { class: 'hint' }, '通知が「ブロック」になっています。端末やブラウザの設定で、このアプリの通知を許可してください。');
+    return h('div', { class: 'row' }, h('button', {
+      onclick: async () => {
+        if (await Notify.ensurePermission()) { toast('通知を許可しました'); openSettings(); }
+        else toast('通知は許可されませんでした');
+      },
+    }, '通知を許可する'));
+  };
+
   const keys = [
     ['Ctrl+S', '保存して同期'], ['Alt+O', 'ファイル一覧'], ['Alt+N', '新しい原稿'], ['Alt+M', 'すぐメモ（メモ フォルダに新規）'],
     ['Alt+L', 'アウトライン'], ['Alt+↑ / Alt+↓', 'カーソルのある節を前後へ移動'], ['Alt+Shift+↑ / ↓', '前後の見出しへ移動'],
@@ -2031,6 +2076,7 @@ async function openSettings(section) {
     ['Alt+R', 'ルビ記法を挿入 ｜漢字《かんじ》'], ['Alt+B', '傍点記法を挿入 《《強調》》'], ['Alt+T', '日付と時刻を挿入'],
     ['F7 / Alt+K', '校正モード（誤字・表記ゆれに波線）'], ['F8 / Shift+F8', '次／前の指摘へ'],
     ['Alt+Y', '読み上げ推敲（選択部分、またはカーソルのある段落から）'], ['Alt+Q', 'QRコードで渡す'],
+    ['Alt+C', 'この原稿を通知欄に留める／外す（クリップ）'],
     ['Alt+U', '読書（本棚）。読書中は ← → ・Space・PageDown でページをめくる、T 目次、B しおり、＋／− 文字の大きさ、Esc 閉じる'],
     ['Alt+E', 'PDF（応募原稿）を作る'], ['Alt+I ／ Alt+W', '作品の進捗／執筆記録'],
     ['Alt+H', '版の履歴'], ['Alt+G', '目標文字数'], ['Alt+＋ / Alt+−', '文字を大きく／小さく'], ['Alt+,', '設定'], ['Esc', 'パネルを閉じる'],
@@ -2103,6 +2149,35 @@ async function openSettings(section) {
         }, '接続テスト'),
         h('button', { onclick: async () => { await saveSync(); await doSync({ manual: true }); } }, '今すぐ同期')),
       syncMsg),
+    h('fieldset', { class: 'set', id: 'set-notify' }, h('legend', {}, '通知（すぐメモのボタン・クリップ）'),
+      Notify.supported() ? [
+        h('p', { class: 'hint' }, 'ホーム画面の小窓（ウィジェット）は Web アプリでは作れないので、代わりに通知欄をボタン代わりに使います。通知は音も振動もしません。'),
+        h('label', { class: 'field check' },
+          h('input', {
+            type: 'checkbox', checked: !!st.memoButton,
+            onchange: async (e) => {
+              if (e.target.checked && !await Notify.ensurePermission()) {
+                e.target.checked = false;
+                toast('通知が許可されていません。端末の設定で、このアプリの通知を「許可」にしてください', 6000);
+                return;
+              }
+              st.memoButton = e.target.checked;
+              saveSettings();
+              if (st.memoButton) await Notify.showMemoButton();
+              else await Notify.hideMemoButton();
+            },
+          }),
+          '通知欄に「すぐメモ」のボタンを出しておく（押すと新しいメモがすぐ開きます）'),
+        h('p', { class: 'hint' }, S.clips.length ? '通知欄に留めている原稿：' : '通知欄に留めている原稿はありません。ファイル一覧の「⋯」→「通知欄に留める（クリップ）」、または「⋯」メニューから留められます。'),
+        ...S.clips.map((id) => {
+          const d = S.clipDocs?.[id];
+          return h('div', { class: 'row' },
+            h('span', { style: 'flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap' }, d ? d.name : id),
+            h('button', { onclick: () => setClip(id, false) }, '外す'));
+        }),
+        permissionHint(),
+      ] : h('p', { class: 'hint' }, 'この端末（ブラウザ）は通知に対応していません。'),
+      h('p', { class: 'hint' }, 'ホーム画面に「すぐメモ」専用のアイコンを置くこともできます。アプリのアイコンを長押しすると出る「すぐメモ」を、そのままホーム画面へドラッグしてください（Android）。')),
     h('fieldset', { class: 'set', id: 'set-install' }, h('legend', {}, 'アプリとして入れる（パソコン・タブレット）'),
       h('p', { class: 'hint' }, isInstalled()
         ? 'いまはアプリとして起動しています。'
@@ -2351,6 +2426,7 @@ function onPulled(id, oldContent, newContent) {
     if (!focused) editor.blur();
     updateStats();
     toast(Sync.isFolderMode(S.sync) ? 'フォルダ側（Obsidian など）での変更を取り込みました' : 'PCでの変更を取り込みました', 2500);
+    if (S.clips.includes(id)) db.get('docs', id).then((d) => d && Notify.showClip(d, { force: true }));
   } else {
     // 取り込む瞬間に書き足していた: 次の同期で両方の版を残す
     db.update('docs', id, (d) => { d.baseSha = null; return d; });
@@ -2551,6 +2627,7 @@ const COMMANDS = {
       mid && [S.focus ? '集中モードを終わる' : '集中モード', 'focus'],
       [document.fullscreenElement ? '全面表示をやめる（ステータスバーを出す）' : '全面表示（ステータスバーを隠す）', 'fullscreen'],
       [$('#readBar').hidden ? '読み上げ推敲' : '読み上げを終わる', 'read'],
+      Notify.supported() && S.doc ? [S.clips.includes(S.doc.id) ? 'この原稿のクリップを外す' : 'この原稿を通知欄に留める（クリップ）', 'clip'] : null,
       ['読書（本棚・EPUB などを読む）', 'book'],
       ['この原稿を本のように読む', 'readDoc'],
       ['QRコードで渡す', 'qr'],
@@ -2568,6 +2645,7 @@ const COMMANDS = {
     else if (S.panel !== 'proof') openProofPanel();
     else toggleProof(false);
   },
+  clip: () => S.doc && toggleClip(S.doc.id),
   book: () => {
     if (bookView.isOpen()) { bookView.close(); return; }
     closePanel();
@@ -2597,7 +2675,7 @@ const KEYMAP = {
   'A-h': 'history', 'A-g': 'goal', 'A-t': 'date', 'A-r': 'ruby', 'A-b': 'bouten',
   'A-ArrowUp': 'sectionUp', 'A-ArrowDown': 'sectionDown', 'A-S-ArrowUp': 'headingPrev', 'A-S-ArrowDown': 'headingNext',
   'F7': 'proof', 'A-k': 'proof', 'F8': 'proofNext', 'S-F8': 'proofPrev',
-  'A-q': 'qr', 'A-e': 'pdf', 'A-i': 'progress', 'A-w': 'record', 'A-y': 'read', 'A-u': 'book',
+  'A-q': 'qr', 'A-e': 'pdf', 'A-i': 'progress', 'A-w': 'record', 'A-y': 'read', 'A-u': 'book', 'A-c': 'clip',
   'A-=': 'bigger', 'A-S-=': 'bigger', 'A-;': 'bigger', 'A--': 'smaller',
 };
 const EDITOR_ONLY = new Set(['date', 'ruby', 'bouten', 'sectionUp', 'sectionDown', 'headingPrev', 'headingNext', 'findNext', 'findPrev']);
@@ -2671,11 +2749,19 @@ const WELCOME = `# pomnote へようこそ
 　このファイルは消してかまいません。
 `;
 
-async function handleLaunchParams() {
-  const p = new URLSearchParams(location.search);
+async function handleLaunchParams(search = location.search) {
+  const p = new URLSearchParams(search);
   if (![...p.keys()].length) return false;
   history.replaceState(null, '', location.pathname);
   if (p.get('new') === 'memo') { await quickMemo(); return true; }
+  if (p.get('open') === 'book') { closePanel(); bookView.open(); return true; }
+  const docId = p.get('doc');
+  if (docId) { // 通知のクリップから開いた
+    closePanel();
+    if (bookView.isOpen()) bookView.close();
+    if (await openDoc(docId)) return true;
+    toast('その原稿は見つかりませんでした');
+  }
   const shared = [p.get('title'), p.get('text'), p.get('url')].filter(Boolean).join('\n');
   if (shared) { await quickMemo(shared); toast('共有された内容を新しいメモにしました'); return true; }
   return false;
@@ -2689,6 +2775,7 @@ async function start() {
     saveSettings();
   }
   await loadToday();
+  S.clips = await Notify.getClips();
   S.proofIgnoreGlobal = new Set(await db.kvGet('proofIgnore', []));
   applyView();
   setSyncState(Sync.isConfigured(S.sync) ? 'pending' : 'none');
@@ -2709,8 +2796,21 @@ async function start() {
     setSyncState(S.unsynced ? 'pending' : 'ok');
     doSync();
   }
+  if (Notify.permission() === 'granted') { // 端末を再起動すると通知は消えるので、起動のたびに出し直す
+    S.clips = await Notify.refreshClips((id) => db.get('docs', id));
+    if (S.settings.memoButton) Notify.showMemoButton();
+  }
   keepAwake();
   armFullscreenOnGesture();
+
+  if ('serviceWorker' in navigator) {
+    // 通知（クリップ・すぐメモのボタン）を押したとき、開いているこの画面で開く
+    navigator.serviceWorker.addEventListener('message', async (e) => {
+      if (e.data?.type !== 'open') return;
+      const search = new URL(e.data.url).search;
+      if (search) await handleLaunchParams(search);
+    });
+  }
 
   if ('serviceWorker' in navigator) {
     const hadController = !!navigator.serviceWorker.controller; // 初回の登録では再読み込みしない
