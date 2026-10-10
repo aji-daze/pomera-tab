@@ -1,11 +1,11 @@
 // オフラインで起動できるよう、アプリ本体を端末に保存しておく。
 // アプリを更新したら VERSION を上げる（端末側に「更新があります」と表示される）。
-const VERSION = '1.10.0';
+const VERSION = '1.11.0';
 const CACHE = `pomera-tab-${VERSION}`;
 const FONT_CACHE = 'pomera-tab-fonts';
 const SHELL = [
   './', 'index.html', 'style.css', 'manifest.webmanifest',
-  'js/app.js', 'js/db.js', 'js/text.js', 'js/sync.js', 'js/dict.js', 'js/proof.js', 'js/dictview.js', 'js/qr.js', 'js/print.js', 'js/speech.js', 'js/localfs.js', 'js/formats.js', 'js/bookview.js',
+  'js/app.js', 'js/db.js', 'js/text.js', 'js/sync.js', 'js/dict.js', 'js/proof.js', 'js/dictview.js', 'js/qr.js', 'js/print.js', 'js/speech.js', 'js/localfs.js', 'js/formats.js', 'js/bookview.js', 'js/notify.js',
   'icons/icon-192.png', 'icons/icon-512.png', 'icons/maskable-512.png',
 ];
 
@@ -25,6 +25,32 @@ self.addEventListener('activate', (e) => {
 self.addEventListener('message', (e) => {
   if (e.data === 'skipWaiting') self.skipWaiting();
   if (e.data === 'version') e.source.postMessage({ version: VERSION });
+});
+
+// 通知（すぐメモのボタン・クリップ）を押したとき。開いている画面があればそれを使う
+self.addEventListener('notificationclick', (e) => {
+  const data = e.notification.data || {};
+  const n = e.notification;
+  const url = e.action === 'memo' ? './?new=memo' : e.action === 'app' ? './' : data.url || './';
+  e.notification.close();
+  e.waitUntil((async () => {
+    const target = new URL(url, self.registration.scope).href;
+    const clients = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+    const open = clients.find((c) => c.url.startsWith(self.registration.scope));
+    if (open) {
+      await open.focus();
+      open.postMessage({ type: 'open', url: target });
+    } else {
+      await self.clients.openWindow(target);
+    }
+    // 留めておく通知は、押して消えたあとに出し直す
+    if (data.clip || data.keep) {
+      await self.registration.showNotification(n.title, {
+        body: n.body, tag: n.tag, silent: true, requireInteraction: true,
+        icon: n.icon, badge: n.badge, data, actions: n.actions,
+      });
+    }
+  })());
 });
 
 self.addEventListener('fetch', (e) => {
