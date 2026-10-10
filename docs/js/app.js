@@ -469,6 +469,12 @@ async function uniqueName(folder, name, ext, exceptId) {
   for (let n = 2; ; n++) if (!same.includes(`${name} (${n})`.toLowerCase())) return `${name} (${n})`;
 }
 
+// すぐメモの保存先（既定では Obsidian/ポメラ/メモ）に入っている原稿かどうか
+function isMemoDoc(d) {
+  const memo = T.safeFolder(S.settings.memoFolder || '');
+  return !!memo && (d.folder === memo || d.folder.startsWith(`${memo}/`));
+}
+
 async function openDoc(id, { focus = true } = {}) {
   if (!$('#readBar').hidden) stopReading();
   if (S.doc) {
@@ -497,6 +503,8 @@ async function openDoc(id, { focus = true } = {}) {
   setSaveState(true);
   if (S.proof) runProof();
   await db.kvSet('lastDocId', id);
+  // すぐメモを開いても「書きかけの原稿」は変わらない。普通に起動したときは、こちらを開く
+  if (!isMemoDoc(d)) await db.kvSet('lastMainId', id);
   if (focus && !S.panel) editor.focus({ preventScroll: true });
   requestAnimationFrame(() => revealCaret(caret, 0.35));
   return true;
@@ -598,7 +606,8 @@ async function purgeDoc(id) {
 }
 
 async function openFallback() {
-  const docs = (await activeDocs()).sort((a, b) => b.updated - a.updated);
+  const all = (await activeDocs()).sort((a, b) => b.updated - a.updated);
+  const docs = all.filter((d) => !isMemoDoc(d)).length ? all.filter((d) => !isMemoDoc(d)) : all; // メモより原稿を先に
   S.doc = null;
   if (docs.length) await openDoc(docs[0].id);
   else await createDoc({ name: '無題' });
@@ -2782,8 +2791,10 @@ async function start() {
   db.requestPersist();
 
   if (!await handleLaunchParams()) {
+    // 書きかけの原稿を開く（すぐメモで終わっていても、メモではなく原稿に戻る）
+    const mainId = await db.kvGet('lastMainId');
     const lastId = await db.kvGet('lastDocId');
-    const opened = lastId && await openDoc(lastId);
+    const opened = (mainId && await openDoc(mainId)) || (lastId && await openDoc(lastId));
     if (!opened) {
       const docs = await activeDocs();
       if (docs.length) await openFallback();
