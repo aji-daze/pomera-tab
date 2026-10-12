@@ -1,10 +1,10 @@
-// 通知: 「すぐメモ」のボタンを通知欄に出しておく機能と、原稿を通知欄に留める「クリップ」。
+// 通知: 「新しい原稿」のボタンを通知欄に出しておく機能と、原稿を通知欄に留める「クリップ」。
 // Android のホーム画面ウィジェット（小窓）は Web アプリでは作れないので、いつでも押せる場所として通知欄を使う。
 // 通知は端末ごとの許可が要る。許可を求めるのは、ボタンを押したときだけ。
 import * as db from './db.js';
 
 const CLIP_KEY = 'clips';
-const MEMO_TAG = 'memo-button';
+const NEW_TAG = 'new-button';
 const clipTag = (id) => `clip:${id}`;
 const lastShown = new Map(); // 書くたびに出し直さないための間引き
 
@@ -55,7 +55,7 @@ export async function showClip(doc, { force = false } = {}) {
     icon: 'icons/icon-192.png',
     badge: 'icons/icon-192.png',
     data: { url: `./?doc=${encodeURIComponent(doc.id)}`, clip: doc.id },
-    actions: [{ action: 'open', title: '開く' }, { action: 'memo', title: 'すぐメモ' }],
+    actions: [{ action: 'open', title: '開く' }, { action: 'new', title: '新しい原稿' }],
   });
   return true;
 }
@@ -79,21 +79,21 @@ export async function refreshClips(getDoc) {
   return alive;
 }
 
-export async function showMemoButton() {
+export async function showNewButton() {
   const r = await reg();
   if (!r || permission() !== 'granted') return false;
-  await r.showNotification('すぐメモ', {
-    body: 'ここを押すと、新しいメモがすぐ開きます',
-    tag: MEMO_TAG,
+  await r.showNotification('新しい原稿', {
+    body: 'ここを押すと、新しい原稿がすぐ開きます',
+    tag: NEW_TAG,
     renotify: false,
     silent: true,
     requireInteraction: true,
     icon: 'icons/icon-192.png',
     badge: 'icons/icon-192.png',
-    data: { url: './?new=memo', keep: true },
-    actions: [{ action: 'memo', title: 'メモを書く' }, { action: 'app', title: 'アプリを開く' }],
+    data: { url: './?new=doc', keep: true },
+    actions: [{ action: 'new', title: '書き始める' }, { action: 'app', title: 'アプリを開く' }],
   });
   return true;
 }
 
-export const hideMemoButton = () => closeTag(MEMO_TAG);
+export const hideNewButton = () => closeTag(NEW_TAG);

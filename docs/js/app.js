@@ -25,13 +25,14 @@ const DEFAULTS = {
   genkoCols: 20, genkoRows: 20, chapters: true, autoIndent: true, tabFullwidth: true,
   typewriter: false, wakeLock: true, focusStatus: true, autoSyncMin: 5, fileSort: 'name',
   proofCats: { ...Proof.DEFAULT_CATS }, proofDialogue: true, proofMaxLen: 120,
-  memoFolder: 'Obsidian/ポメラ/メモ', driveName: 'OneDrive',
+  homeFolder: '小説-執筆中', // 新しい原稿の置き場所
+  logFolder: 'Obsidian/ポメラ/執筆記録', driveName: 'OneDrive',
   dvVertical: true, dvCols: 0, dvFont: 15, // dvCols 0 = 段数を画面の大きさに合わせる
   penName: '', pdfFormat: 'a4_40x30', pdfNombre: 'center', pdfChapterBreak: true, pdfRuby: true, pdfCover: true,
   readRate: 1, readVoice: '', qrBytes: 600, fullscreen: false,
   readStyle: 'standard', readPitchAdjust: 0, readPauseScale: 1,
   bkFont: 18, bkLh: 1.9, // 読書画面の文字の大きさ・行間
-  memoButton: false, // 通知欄に「すぐメモ」のボタンを出しておく
+  quickNewButton: false, // 通知欄に「新しい原稿」のボタンを出しておく
 };
 const OPEN_BRACKETS = '「『（(〈《【［〔“‘';
 const WEBFONTS = {
@@ -469,11 +470,7 @@ async function uniqueName(folder, name, ext, exceptId) {
   for (let n = 2; ; n++) if (!same.includes(`${name} (${n})`.toLowerCase())) return `${name} (${n})`;
 }
 
-// すぐメモの保存先（既定では Obsidian/ポメラ/メモ）に入っている原稿かどうか
-function isMemoDoc(d) {
-  const memo = T.safeFolder(S.settings.memoFolder || '');
-  return !!memo && (d.folder === memo || d.folder.startsWith(`${memo}/`));
-}
+const homeFolder = () => T.safeFolder(S.settings.homeFolder || '');
 
 async function openDoc(id, { focus = true } = {}) {
   if (!$('#readBar').hidden) stopReading();
@@ -503,8 +500,6 @@ async function openDoc(id, { focus = true } = {}) {
   setSaveState(true);
   if (S.proof) runProof();
   await db.kvSet('lastDocId', id);
-  // すぐメモを開いても「書きかけの原稿」は変わらない。普通に起動したときは、こちらを開く
-  if (!isMemoDoc(d)) await db.kvSet('lastMainId', id);
   if (focus && !S.panel) editor.focus({ preventScroll: true });
   requestAnimationFrame(() => revealCaret(caret, 0.35));
   return true;
@@ -528,16 +523,16 @@ async function folderList() {
 async function newDocDialog() {
   const r = await form('新しい原稿', [
     { key: 'name', label: '名前', value: '' , placeholder: '例：第一章' },
-    { key: 'folder', label: 'フォルダ（「/」で階層。例：Obsidian/pvo）', value: S.panel === 'files' ? S.fileDir : (S.doc?.folder || ''), list: await folderList() },
+    { key: 'folder', label: 'フォルダ（「/」で階層）', value: S.panel === 'files' ? S.fileDir : (S.doc?.folder || homeFolder()), list: await folderList() },
   ], '作成');
   if (!r) return;
   closePanel();
   await createDoc({ folder: r.folder, name: r.name || T.dateStamp(new Date(), false) });
 }
 
-// 辞書の単語帳を、すぐメモの保存先と同じ階層の「単語帳」原稿に書き出す（Obsidian にも同期される）
+// 辞書の単語帳を、原稿の置き場所にある「単語帳」原稿に書き出す（Obsidian にも同期される）
 async function exportVocab(items) {
-  const folder = T.safeFolder(S.settings.memoFolder.split('/').slice(0, -1).join('/')) || 'ポメラ';
+  const folder = homeFolder();
   const lines = items.map((v) => `- ${v.h ? `${v.h.split('・')[0]}（${v.y}）` : v.y}${v.p ? `〘${v.p}〙` : ''}: ${v.d}${v.known ? '　✓覚えた' : ''}`);
   const content = `# 単語帳\n\n${lines.join('\n')}\n`;
   const existing = (await activeDocs()).find((d) => d.folder === folder && d.name === '単語帳');
@@ -551,11 +546,12 @@ async function exportVocab(items) {
   }
   S.unsynced = true;
   setSyncState('pending');
-  toast(`「${folder}/単語帳」に${items.length}語を書き出しました`, 3000);
+  toast(`「${folder ? `${folder}/` : ''}単語帳」に${items.length}語を書き出しました`, 3000);
 }
 
-async function quickMemo(text = '') {
-  await createDoc({ folder: S.settings.memoFolder, name: T.compactStamp(), content: text });
+// ショートカット・通知・共有から「新しい原稿」をすぐ開く
+async function quickNew(text = '') {
+  await createDoc({ folder: homeFolder(), name: T.compactStamp(), content: text, caret: 0 });
 }
 
 async function relocateDoc(id, folder, name) {
@@ -606,8 +602,7 @@ async function purgeDoc(id) {
 }
 
 async function openFallback() {
-  const all = (await activeDocs()).sort((a, b) => b.updated - a.updated);
-  const docs = all.filter((d) => !isMemoDoc(d)).length ? all.filter((d) => !isMemoDoc(d)) : all; // メモより原稿を先に
+  const docs = (await activeDocs()).sort((a, b) => b.updated - a.updated);
   S.doc = null;
   if (docs.length) await openDoc(docs[0].id);
   else await createDoc({ name: '無題' });
@@ -1563,8 +1558,7 @@ function defaultDeviceName() {
 }
 
 function deviceLogFolder() {
-  const parent = S.settings.memoFolder.split('/').slice(0, -1).join('/') || 'ポメラ';
-  return T.safeFolder(`${parent}/執筆記録`);
+  return T.safeFolder(S.settings.logFolder || '執筆記録');
 }
 
 const ownDeviceName = () => T.safeName(S.settings.deviceName || defaultDeviceName());
@@ -2077,7 +2071,7 @@ async function openSettings(section) {
   };
 
   const keys = [
-    ['Ctrl+S', '保存して同期'], ['Alt+O', 'ファイル一覧'], ['Alt+N', '新しい原稿'], ['Alt+M', 'すぐメモ（メモ フォルダに新規）'],
+    ['Ctrl+S', '保存して同期'], ['Alt+O', 'ファイル一覧'], ['Alt+N', '新しい原稿'], ['Alt+M', '名前を聞かずに新しい原稿（日時の名前で、原稿の置き場所に作る）'],
     ['Alt+L', 'アウトライン'], ['Alt+↑ / Alt+↓', 'カーソルのある節を前後へ移動'], ['Alt+Shift+↑ / ↓', '前後の見出しへ移動'],
     ['Alt+D', '紙の辞書を開く（語を選んでいれば、その語を横のパネルで調べる）'],
     ['辞書で ← → / Space', 'ページをめくる（縦組みは ← が次のページ）'], ['辞書で / ・ T ・ R ・ B', '検索・今日の言葉・パッと開く・単語帳'], ['Ctrl+F / Ctrl+H', '検索／置換'], ['F3 / Shift+F3', '次／前を検索'],
@@ -2124,9 +2118,14 @@ async function openSettings(section) {
           toast(`執筆記録のファイルを「${newName}」にしました`, 2500);
         },
       })),
-      field('すぐメモの保存先', h('input', {
-        type: 'text', value: st.memoFolder, placeholder: '例：Obsidian/ポメラ/メモ',
-        onchange: (e) => { st.memoFolder = T.safeFolder(e.target.value) || 'メモ'; e.target.value = st.memoFolder; saveSettings(); },
+      field('原稿の置き場所', h('input', {
+        type: 'text', value: st.homeFolder, placeholder: '例：小説-執筆中',
+        title: '新しい原稿・単語帳をここに作ります。同期すると、ドライブの同じ名前のフォルダになります',
+        onchange: (e) => { st.homeFolder = T.safeFolder(e.target.value); e.target.value = st.homeFolder; saveSettings(); },
+      })),
+      field('執筆記録の置き場所', h('input', {
+        type: 'text', value: st.logFolder, placeholder: '例：Obsidian/ポメラ/執筆記録',
+        onchange: (e) => { st.logFolder = T.safeFolder(e.target.value) || '執筆記録'; e.target.value = st.logFolder; saveSettings(); },
       })),
       field('原稿用紙換算', select('genkoCols', [[20, '20字'], [40, '40字']]), '×', select('genkoRows', [[20, '20行'], [30, '30行'], [40, '40行']]))),
     h('fieldset', { class: 'set', id: 'set-read' }, h('legend', {}, '読み上げ推敲（Alt+Y）'),
@@ -2158,25 +2157,25 @@ async function openSettings(section) {
         }, '接続テスト'),
         h('button', { onclick: async () => { await saveSync(); await doSync({ manual: true }); } }, '今すぐ同期')),
       syncMsg),
-    h('fieldset', { class: 'set', id: 'set-notify' }, h('legend', {}, '通知（すぐメモのボタン・クリップ）'),
+    h('fieldset', { class: 'set', id: 'set-notify' }, h('legend', {}, '通知（新しい原稿のボタン・クリップ）'),
       Notify.supported() ? [
         h('p', { class: 'hint' }, 'ホーム画面の小窓（ウィジェット）は Web アプリでは作れないので、代わりに通知欄をボタン代わりに使います。通知は音も振動もしません。'),
         h('label', { class: 'field check' },
           h('input', {
-            type: 'checkbox', checked: !!st.memoButton,
+            type: 'checkbox', checked: !!st.quickNewButton,
             onchange: async (e) => {
               if (e.target.checked && !await Notify.ensurePermission()) {
                 e.target.checked = false;
                 toast('通知が許可されていません。端末の設定で、このアプリの通知を「許可」にしてください', 6000);
                 return;
               }
-              st.memoButton = e.target.checked;
+              st.quickNewButton = e.target.checked;
               saveSettings();
-              if (st.memoButton) await Notify.showMemoButton();
-              else await Notify.hideMemoButton();
+              if (st.quickNewButton) await Notify.showNewButton();
+              else await Notify.hideNewButton();
             },
           }),
-          '通知欄に「すぐメモ」のボタンを出しておく（押すと新しいメモがすぐ開きます）'),
+          '通知欄に「新しい原稿」のボタンを出しておく（押すとすぐ書き始められます）'),
         h('p', { class: 'hint' }, S.clips.length ? '通知欄に留めている原稿：' : '通知欄に留めている原稿はありません。ファイル一覧の「⋯」→「通知欄に留める（クリップ）」、または「⋯」メニューから留められます。'),
         ...S.clips.map((id) => {
           const d = S.clipDocs?.[id];
@@ -2186,7 +2185,7 @@ async function openSettings(section) {
         }),
         permissionHint(),
       ] : h('p', { class: 'hint' }, 'この端末（ブラウザ）は通知に対応していません。'),
-      h('p', { class: 'hint' }, 'ホーム画面に「すぐメモ」専用のアイコンを置くこともできます。アプリのアイコンを長押しすると出る「すぐメモ」を、そのままホーム画面へドラッグしてください（Android）。')),
+      h('p', { class: 'hint' }, 'ホーム画面に「新しい原稿」専用のアイコンを置くこともできます。アプリのアイコンを長押しすると出る「新しい原稿」を、そのままホーム画面へドラッグしてください（Android）。')),
     h('fieldset', { class: 'set', id: 'set-install' }, h('legend', {}, 'アプリとして入れる（パソコン・タブレット）'),
       h('p', { class: 'hint' }, isInstalled()
         ? 'いまはアプリとして起動しています。'
@@ -2588,7 +2587,7 @@ function jumpHeading(dir) {
 const COMMANDS = {
   files: () => togglePanel('files', openFiles),
   newdoc: newDocDialog,
-  memo: () => quickMemo(),
+  quicknew: () => quickNew(),
   rename: () => S.doc && renameDialog(S.doc.id),
   outline: () => togglePanel('outline', openOutline),
   dict: () => {
@@ -2643,7 +2642,6 @@ const COMMANDS = {
       ['PDF（応募原稿）を作る', 'pdf'],
       ['作品の進捗', 'progress'],
       ['執筆記録', 'record'],
-      ['すぐメモ', 'memo'],
       ['新しい原稿', 'newdoc'],
       narrow && ['設定', 'settings'],
     ]);
@@ -2678,7 +2676,7 @@ const COMMANDS = {
 };
 
 const KEYMAP = {
-  'C-s': 'sync', 'C-o': 'files', 'A-o': 'files', 'A-n': 'newdoc', 'A-m': 'memo',
+  'C-s': 'sync', 'C-o': 'files', 'A-o': 'files', 'A-n': 'newdoc', 'A-m': 'quicknew',
   'A-l': 'outline', 'A-d': 'dict', 'C-f': 'find', 'C-h': 'replace', 'F3': 'findNext', 'S-F3': 'findPrev', 'C-g': 'findNext',
   'A-v': 'vertical', 'A-p': 'preview', 'A-z': 'focus', 'F11': 'focus', 'A-,': 'settings', 'F1': 'help', 'A-/': 'help',
   'A-h': 'history', 'A-g': 'goal', 'A-t': 'date', 'A-r': 'ruby', 'A-b': 'bouten',
@@ -2762,7 +2760,7 @@ async function handleLaunchParams(search = location.search) {
   const p = new URLSearchParams(search);
   if (![...p.keys()].length) return false;
   history.replaceState(null, '', location.pathname);
-  if (p.get('new') === 'memo') { await quickMemo(); return true; }
+  if (p.get('new')) { await quickNew(); return true; } // ?new=doc（古いショートカットの ?new=memo も同じ）
   if (p.get('open') === 'book') { closePanel(); bookView.open(); return true; }
   const docId = p.get('doc');
   if (docId) { // 通知のクリップから開いた
@@ -2772,7 +2770,7 @@ async function handleLaunchParams(search = location.search) {
     toast('その原稿は見つかりませんでした');
   }
   const shared = [p.get('title'), p.get('text'), p.get('url')].filter(Boolean).join('\n');
-  if (shared) { await quickMemo(shared); toast('共有された内容を新しいメモにしました'); return true; }
+  if (shared) { await quickNew(shared); toast('共有された内容を新しい原稿にしました'); return true; }
   return false;
 }
 
@@ -2791,10 +2789,9 @@ async function start() {
   db.requestPersist();
 
   if (!await handleLaunchParams()) {
-    // 書きかけの原稿を開く（すぐメモで終わっていても、メモではなく原稿に戻る）
-    const mainId = await db.kvGet('lastMainId');
+    // 前に書いていた原稿を、前に書いていた場所（カーソルの位置）から開く
     const lastId = await db.kvGet('lastDocId');
-    const opened = (mainId && await openDoc(mainId)) || (lastId && await openDoc(lastId));
+    const opened = lastId && await openDoc(lastId);
     if (!opened) {
       const docs = await activeDocs();
       if (docs.length) await openFallback();
@@ -2809,13 +2806,13 @@ async function start() {
   }
   if (Notify.permission() === 'granted') { // 端末を再起動すると通知は消えるので、起動のたびに出し直す
     S.clips = await Notify.refreshClips((id) => db.get('docs', id));
-    if (S.settings.memoButton) Notify.showMemoButton();
+    if (S.settings.quickNewButton) Notify.showNewButton();
   }
   keepAwake();
   armFullscreenOnGesture();
 
   if ('serviceWorker' in navigator) {
-    // 通知（クリップ・すぐメモのボタン）を押したとき、開いているこの画面で開く
+    // 通知（クリップ・新しい原稿のボタン）を押したとき、開いているこの画面で開く
     navigator.serviceWorker.addEventListener('message', async (e) => {
       if (e.data?.type !== 'open') return;
       const search = new URL(e.data.url).search;
