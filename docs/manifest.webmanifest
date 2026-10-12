@@ -16,10 +16,10 @@
   ],
   "shortcuts": [
     {
-      "name": "すぐメモ",
-      "short_name": "メモ",
-      "description": "新しいメモをすぐ開く",
-      "url": "./?new=memo",
+      "name": "新しい原稿",
+      "short_name": "新規",
+      "description": "新しい原稿をすぐ開く",
+      "url": "./?new=doc",
       "icons": [{ "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png" }]
     },
     {

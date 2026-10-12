@@ -1,6 +1,6 @@
 // オフラインで起動できるよう、アプリ本体を端末に保存しておく。
 // アプリを更新したら VERSION を上げる（端末側に「更新があります」と表示される）。
-const VERSION = '1.12.0';
+const VERSION = '1.13.0';
 const CACHE = `pomera-tab-${VERSION}`;
 const FONT_CACHE = 'pomera-tab-fonts';
 const SHELL = [
@@ -27,11 +27,11 @@ self.addEventListener('message', (e) => {
   if (e.data === 'version') e.source.postMessage({ version: VERSION });
 });
 
-// 通知（すぐメモのボタン・クリップ）を押したとき。開いている画面があればそれを使う
+// 通知（新しい原稿のボタン・クリップ）を押したとき。開いている画面があればそれを使う
 self.addEventListener('notificationclick', (e) => {
   const data = e.notification.data || {};
   const n = e.notification;
-  const url = e.action === 'memo' ? './?new=memo' : e.action === 'app' ? './' : data.url || './';
+  const url = e.action === 'new' || e.action === 'memo' ? './?new=doc' : e.action === 'app' ? './' : data.url || './';
   e.notification.close();
   e.waitUntil((async () => {
     const target = new URL(url, self.registration.scope).href;
