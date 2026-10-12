@@ -80,7 +80,7 @@ export async function backend(cfg) {
 
   return {
     label: 'ファイル版',
-    async tree() {
+    async tree(state) {
       const files = [];
       const walk = async (dir, prefix) => {
         for await (const [name, h] of dir.entries()) {
@@ -99,6 +99,7 @@ export async function backend(cfg) {
         const sha = await shaOf(path, await h.getFile());
         next[path] = meta[path];
         if (sha) map.set(path, sha); // 大きすぎる・UTF-8 でないファイルは同期しない
+        else state?.skipped?.add(path); // 「相手が消した」と誤って端末の原稿をゴミ箱へ送らないよう、触らずに残す
       }
       meta = next;
       await db.kvSet('folderMeta', meta);

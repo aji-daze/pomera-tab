@@ -155,16 +155,16 @@ function uniquePath(path, taken) {
 
 async function syncAll(cfg, hooks) {
   const be = isFolderMode(cfg) ? await LocalFS.backend(cfg) : githubBackend(cfg);
-  const state = { empty: false };
+  const state = { empty: false, skipped: new Set() };
   const stats = { pushed: 0, pulled: 0, deleted: 0, conflicts: [] };
   const remote = await be.tree(state);
   const docs = (await db.getAll('docs')).filter((d) => !d.trashed);
   const byPath = new Map(docs.map((d) => [docPath(d), d]));
   const tombs = new Map((await db.getAll('tombs')).map((t) => [t.path, t]));
-  const taken = new Set([...remote.keys(), ...byPath.keys()]);
+  const taken = new Set([...remote.keys(), ...byPath.keys(), ...state.skipped]);
 
   // 選んだフォルダやリポジトリを間違えたときに、端末の原稿をまとめてゴミ箱へ送らないための歯止め
-  const synced = docs.filter((d) => d.baseSha);
+  const synced = docs.filter((d) => d.baseSha && !state.skipped.has(docPath(d)));
   const vanished = synced.filter((d) => !remote.has(docPath(d))).length;
   if (!hooks.force && vanished >= 10 && vanished > synced.length / 2) {
     const e = new Error(`同期先で、前回まであった原稿の半分以上（${vanished}件）が見つかりません。同期先のフォルダ・リポジトリを確認してください`);
@@ -185,6 +185,8 @@ async function syncAll(cfg, hooks) {
   const paths = [...new Set([...remote.keys(), ...byPath.keys(), ...tombs.keys()])];
   for (const [i, path] of paths.entries()) {
     hooks.onProgress?.(i + 1, paths.length);
+    // 同期先にあるが読めない（大きすぎる・UTF-8 でない）ファイルは、どちら側も変更しない
+    if (state.skipped.has(path)) continue;
     const R = remote.get(path) || null;
     const doc = byPath.get(path);
     const tomb = tombs.get(path);
