@@ -13,7 +13,7 @@ import * as F from './formats.js';
 import { createBookView } from './bookview.js';
 import * as Notify from './notify.js';
 
-const VERSION = '1.0.0';
+const VERSION = '1.14.0'; // sw.js の VERSION と合わせる
 const $ = (s, root = document) => root.querySelector(s);
 const editor = $('#editor');
 const preview = $('#preview');
@@ -45,6 +45,9 @@ const S = {
   sync: { mode: 'github', owner: '', repo: '', branch: 'main', root: '', token: '', folderName: '', exclude: [] },
   installPrompt: null,
   clips: [], // 通知欄に留めている原稿の id
+  swReg: null,
+  swWaiting: null,
+  lastUpdateCheck: 0,
   doc: null,
   savedContent: '',
   saveTimer: 0,
@@ -2236,7 +2239,9 @@ async function openSettings(section) {
     h('fieldset', { class: 'set', id: 'set-help' }, h('legend', {}, 'キー操作'),
       h('table', { class: 'keys' }, keys.map(([k, v]) => h('tr', {}, h('td', {}, h('kbd', {}, k)), h('td', {}, v)))),
       h('p', { class: 'hint' }, 'ルビは「｜漢字《かんじ》」、漢字だけなら「漢字《かんじ》」、傍点は「《《強調》》」。見出しは行頭の「# 」。'),
-      h('p', { class: 'hint' }, `pomnote ${VERSION}`)));
+      h('div', { class: 'row' },
+        h('span', { class: 'hint', style: 'flex:1' }, `pomnote ${S.swVersion || VERSION}${S.swVersion && S.swVersion !== VERSION ? `（本体 ${VERSION}）` : ''}`),
+        h('button', { onclick: () => checkUpdate({ manual: true }) }, 'アプリの更新を確認'))));
 
   panel.append(panelHead('設定'), body);
   if (section) body.querySelector(`#set-${section}`)?.scrollIntoView();
@@ -2814,6 +2819,7 @@ async function start() {
   if ('serviceWorker' in navigator) {
     // 通知（クリップ・新しい原稿のボタン）を押したとき、開いているこの画面で開く
     navigator.serviceWorker.addEventListener('message', async (e) => {
+      if (e.data?.version) { S.swVersion = e.data.version; return; } // いま動いている版
       if (e.data?.type !== 'open') return;
       const search = new URL(e.data.url).search;
       if (search) await handleLaunchParams(search);
@@ -2822,11 +2828,14 @@ async function start() {
 
   if ('serviceWorker' in navigator) {
     const hadController = !!navigator.serviceWorker.controller; // 初回の登録では再読み込みしない
-    const reg = await navigator.serviceWorker.register('sw.js').catch(() => null);
+    // updateViaCache: 'none' … 更新の確認では、保存してある sw.js を使わずに必ず取りに行く
+    const reg = await navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' }).catch(() => null);
     if (reg) {
+      S.swReg = reg;
       const notify = (worker) => {
-        // 起動した直後でまだ何も書いていなければ、確認せずに新しい版へ切り替える（古い版のまま使い続けないように）
-        if (Date.now() - bootAt < 20000 && S.saveCount === 0) { worker.postMessage('skipWaiting'); return; }
+        S.swWaiting = worker;
+        // まだ何も書いていなければ、確認せずに新しい版へ切り替える（古い版のまま使い続けないように）
+        if (S.saveCount === 0) { worker.postMessage('skipWaiting'); return; }
         toast('新しいバージョンがあります', 0, ['更新', () => worker.postMessage('skipWaiting')]);
       };
       if (reg.waiting && navigator.serviceWorker.controller) notify(reg.waiting);
@@ -2841,8 +2850,33 @@ async function start() {
         await saveNow();
         location.reload();
       });
+      navigator.serviceWorker.controller?.postMessage('version');
+      checkUpdate(); // 起動のたびに確認する
     }
   }
 }
+
+// 新しい版が出ていないか確かめる。アプリを開きっぱなしでも気づけるように、画面に戻ったときと1時間ごとにも見る
+async function checkUpdate({ manual = false } = {}) {
+  const reg = S.swReg;
+  if (!reg) return null;
+  if (!manual && Date.now() - S.lastUpdateCheck < 10 * 60 * 1000) return null;
+  S.lastUpdateCheck = Date.now();
+  try {
+    await reg.update();
+  } catch {
+    if (manual) toast('更新を確認できません（ネットにつながっていないかもしれません）', 4000);
+    return null;
+  }
+  const worker = reg.waiting || reg.installing;
+  if (manual) {
+    if (worker) toast('新しいバージョンがあります', 0, ['更新する', () => worker.postMessage('skipWaiting')]);
+    else toast(`最新です（${VERSION}）`, 2500);
+  }
+  return worker;
+}
+
+document.addEventListener('visibilitychange', () => { if (!document.hidden) checkUpdate(); });
+setInterval(() => { if (!document.hidden) checkUpdate(); }, 60 * 60 * 1000);
 
 start();
