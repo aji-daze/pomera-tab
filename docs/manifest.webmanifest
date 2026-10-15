@@ -3,6 +3,7 @@
   "short_name": "pomnote",
   "description": "オフラインで使える、書くことだけの執筆アプリ",
   "lang": "ja",
+  "id": "pomnote",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",
