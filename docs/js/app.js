@@ -13,7 +13,7 @@ import * as F from './formats.js';
 import { createBookView } from './bookview.js';
 import * as Notify from './notify.js';
 
-const VERSION = '1.14.0'; // sw.js の VERSION と合わせる
+const VERSION = '1.15.0'; // sw.js の VERSION と合わせる
 const $ = (s, root = document) => root.querySelector(s);
 const editor = $('#editor');
 const preview = $('#preview');
@@ -2649,6 +2649,7 @@ const COMMANDS = {
       ['執筆記録', 'record'],
       ['新しい原稿', 'newdoc'],
       narrow && ['設定', 'settings'],
+      [`アプリの更新を確認（いま ${S.swVersion || VERSION}）`, 'update'],
     ]);
     if (v && COMMANDS[v]) COMMANDS[v]();
   },
@@ -2658,6 +2659,7 @@ const COMMANDS = {
     else toggleProof(false);
   },
   clip: () => S.doc && toggleClip(S.doc.id),
+  update: () => checkUpdate({ manual: true }),
   book: () => {
     if (bookView.isOpen()) { bookView.close(); return; }
     closePanel();
